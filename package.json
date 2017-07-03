@@ -1,0 +1,27 @@
+{
+  "name": "af-metadata-reader",
+  "version": "1.0.0",
+  "description": "Read and save AfinaSQL metadata",
+  "main": "asmeta.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "igor-go",
+  "license": "ISC",
+  "bin": {
+    "asmeta": "./index.js"
+  },
+  "engines": {
+    "node": ">= 0.10"
+  },
+  "dependencies": {
+    "commander": "^2.10.0",
+    "fs-extra": "^3.0.1",
+    "inquirer": "^3.1.1",
+    "log-update": "^2.0.0",
+    "oracledb": "^1.13.1",
+    "tomlify-j0.4": "^2.0.0",
+    "xmldom": "^0.1.27",
+    "xpath": "0.0.24"
+  }
+}
