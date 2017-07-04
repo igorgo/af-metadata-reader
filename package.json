@@ -23,5 +23,9 @@
     "tomlify-j0.4": "^2.0.0",
     "xmldom": "^0.1.27",
     "xpath": "0.0.24"
+  },
+  "devDependencies": {
+    "babel-eslint": "^7.2.3",
+    "eslint": "^4.1.1"
   }
 }
