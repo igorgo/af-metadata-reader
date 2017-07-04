@@ -8,14 +8,32 @@ const
     conU = require('log-update'),
     program = require('commander'),
     xpath = require('xpath'),
-    dom = require('xmldom').DOMParser,
+    Dom = require('xmldom').DOMParser,
     tomlify = require('tomlify-j0.4'),
-    fs = require('fs-extra')
+    fs = require('fs-extra'),
+    iconv = require('iconv-lite'),
+    pd = require('pretty-data2').pd
+
+const contexts = [
+    'Идентификатор записи',                 // 0
+    'Идентификатор родительской записи',    // 1
+    'Идентификатор каталога',               // 2
+    'Идентификатор организации',            // 3
+    'Идентификатор версии',                 // 4
+    'Код раздела',                          // 5
+    'Код родительского раздела',            // 6
+    'Пользователь',                         // 7
+    'NULL',                                 // 8
+    'Идентификатор отмеченных записей',     // 9
+    'Код мастер раздела',                   // 10
+    'Идентификатор процесса',               // 11
+    'Идентификатор мастер записи',          // 12
+    'Метод вызова раздела'                  // 13
+]
 let oci
 oracledb.maxRows = 10000
-// oracledb.fetchAsBuffer = [oracledb.BLOB]
-//  oracledb.fetchAsString = [oracledb.CLOB]
 oracledb.outFormat = oracledb.OBJECT // {outFormat : oracledb.ARRAY}
+oracledb.fetchAsString = [oracledb.CLOB]
 
 /* const fixNum = (a) => {
  return a ? a.toFixed(0) : null
@@ -51,39 +69,15 @@ const exportClass = async (classCode, dir) => {
             throw 'Class not found'
         }
     }
-    const saveIcons = async () => {
+    const saveIcons = async (path, code) => {
         conU('... saving the icons')
-        let query = await oci.execute(`
-            select SY.*
-              from SYSIMAGES SY
-             where RN in (
-                          
-                          select T.RN
-                            from SYSIMAGES T
-                           where exists (select null
-                                    from UNITLIST UL
-                                   where UL.RN = :WORKIN_CLASS
-                                     and UL.SYSIMAGE = T.RN)
-                          union
-                          select T.RN
-                            from SYSIMAGES T
-                           where exists (select null
-                                    from UNITFUNC UF
-                                   where UF.PRN = :WORKIN_CLASS
-                                     and UF.SYSIMAGE = T.RN)
-                          union
-                          select T.RN
-                            from SYSIMAGES T
-                           where exists (select null
-                                    from UNIT_SHOWMETHODS US
-                                   where US.PRN = :WORKIN_CLASS
-                                     and US.SYSIMAGE = T.RN))
-        `, [classRn])
-        for (let i = 0, l = query.rows.length; i < l; i++) {
-            let icon = query.rows[i]
-            await saveLob(icon.SMALL_IMAGE, `${classDir}/icons`, `${icon.CODE}__16.bmp`)
-            await saveLob(icon.LARGE_IMAGE, `${classDir}/icons`, `${icon.CODE}__24.bmp`)
-        }
+        let query = await oci.execute(
+            ' select SY.*  from SYSIMAGES SY  where code = :CODE',
+            [code]
+        )
+        let icon = query.rows[0]
+        await saveBlob(icon.SMALL_IMAGE, path, `${icon.CODE}_16.bmp`)
+        await saveBlob(icon.LARGE_IMAGE, path, `${icon.CODE}_24.bmp`)
     }
     const createDomainsTable = async () => {
         const getMetaDomainList = async () => {
@@ -124,14 +118,11 @@ const exportClass = async (classCode, dir) => {
                  where PRN = :CLASSRN
                    and LENGTH(SETTINGS) > 0
                `,
-                [classRn], {
-                    fetchInfo: {'SETS': {type: oracledb.STRING}}
-                }
-            )
+                [classRn])
             let res = []
             let nodeVals
             for (let i = 0; i < r.rows.length; i++) {
-                let doc = new dom().parseFromString(r.rows[i].SETS)
+                let doc = new Dom().parseFromString(r.rows[i].SETS)
                 let nodes = xpath.select('/ShowMethod/Group/DataSource/Params/ConditionParams/Param/@Domain', doc)
                 nodeVals = nodes.map((node) => {
                     return node.value
@@ -211,11 +202,11 @@ const exportClass = async (classCode, dir) => {
     }
     const createClassTable = async () => {
         let classObject
-        let getTableObj = async (tableName) => {
+        const getTableObj = async (tableName) => {
             conU('... get table definition')
-            let query = await oci.execute('select TL.* from TABLELIST TL where TL.TABLENAME = :TABLENAME', [tableName])
-            let res = query.rows[0]
-            let names = await getResources(res.RN, 'TABLELIST', 'TABLENOTE')
+            const query = await oci.execute('select TL.* from TABLELIST TL where TL.TABLENAME = :TABLENAME', [tableName])
+            const res = query.rows[0]
+            const names = await getResources(res.RN, 'TABLELIST', 'TABLENOTE')
             return {
                 'Имя': res.TABLENAME,
                 'Наименование (RU)': names.RU,
@@ -224,9 +215,9 @@ const exportClass = async (classCode, dir) => {
                 'Технология производства': ['Стандарт', 'Конструктор'][res.TECHNOLOGY]
             }
         }
-        let getAttribs = async () => {
+        const getAttribs = async () => {
             conU('... get attributes\' metadata')
-            let attrsQuery = await oci.execute(`
+            const attrsQuery = await oci.execute(`
                 select CA.*,
                        DM.CODE            as SDOMAIN,
                        CL.CONSTRAINT_NAME as SREF_LINK,
@@ -236,12 +227,12 @@ const exportClass = async (classCode, dir) => {
                    and CA.DOMAIN = DM.RN
                    and CA.REF_LINK = CL.RN(+)
                    and CA.REF_ATTRIBUTE = CAR.RN(+)
-                 order by CA.POSITION                           
-            `, [classRn])
+                 order by CA.POSITION `,
+                [classRn])
             let attrs = []
             for (let i = 0, len = attrsQuery.rows.length; i < len; i++) {
-                let attr = attrsQuery.rows[i]
-                let names = await getResources(attr.RN, 'DMSCLATTRS', 'CAPTION')
+                const attr = attrsQuery.rows[i]
+                const names = await getResources(attr.RN, 'DMSCLATTRS', 'CAPTION')
                 attrs.push({
                     'Имя': attr.COLUMN_NAME,
                     'Наименование (RU)': names.RU,
@@ -255,9 +246,28 @@ const exportClass = async (classCode, dir) => {
             }
             return attrs
         }
-        let getConstraints = async () => {
+        const getConstraints = async () => {
+            const getConstrAttrs = async (constrRn) => {
+                let query = await oci.execute(`
+                        select T.POSITION, TR1.COLUMN_NAME
+                          from DMSCLCONATTRS T, DMSCLATTRS TR1
+                         where T.PRN = :A_CONS
+                           and T.ATTRIBUTE = TR1.RN
+                         order by T.POSITION
+                     `, [constrRn])
+                /* for (let i=0, l=attrs.rows.length;i<l;i++) {
+                 let attr = attrs.rows[i]
+
+                 } */
+                return query.rows.map((attr) => {
+                    return {
+                        'Позиция': attr.POSITION,
+                        'Атрибут': attr.COLUMN_NAME
+                    }
+                })
+            }
             conU('... get constraints\' metadata')
-            let constrsQuery = await oci.execute(`
+            const query = await oci.execute(`
                 select T.*,
                        MES.CODE       as MES_CODE,
                        MES.TECHNOLOGY as MES_TECHNOLOGY,
@@ -268,29 +278,10 @@ const exportClass = async (classCode, dir) => {
                  order by T.CONSTRAINT_TYPE, T.CONSTRAINT_NAME
             `, [classRn])
             let constrs = []
-            for (let i = 0, len = constrsQuery.rows.length; i < len; i++) {
-                let constr = constrsQuery.rows[i]
-                let names = await getResources(constr.RN, 'DMSCLCONSTRS', 'CONSTRAINT_NOTE')
-                let messages = await getResources(constr.MESSAGE, 'DMSMESSAGES', 'TEXT')
-                let getConstrAttrs = async (constrRn) => {
-                    let query = await oci.execute(`
-                        select T.POSITION, TR1.COLUMN_NAME
-                          from DMSCLCONATTRS T, DMSCLATTRS TR1
-                         where T.PRN = :A_CONS
-                           and T.ATTRIBUTE = TR1.RN
-                         order by T.POSITION
-                     `, [constrRn])
-                    /* for (let i=0, l=attrs.rows.length;i<l;i++) {
-                     let attr = attrs.rows[i]
-
-                     } */
-                    return query.rows.map((attr) => {
-                        return {
-                            'Позиция': attr.POSITION,
-                            'Атрибут': attr.COLUMN_NAME
-                        }
-                    })
-                }
+            for (let i = 0, len = query.rows.length; i < len; i++) {
+                const constr = query.rows[i]
+                const names = await getResources(constr.RN, 'DMSCLCONSTRS', 'CONSTRAINT_NOTE')
+                const messages = await getResources(constr.MESSAGE, 'DMSMESSAGES', 'TEXT')
                 constrs.push({
                     'Имя': constr.CONSTRAINT_NAME,
                     'Наименование (RU)': names.RU,
@@ -320,6 +311,412 @@ const exportClass = async (classCode, dir) => {
             }
             return constrs
         }
+        const getLinks = async () => {
+            const getAttrs = async (link) => {
+                const query = await oci.execute(`
+                        select T.POSITION,
+                               TR1.COLUMN_NAME as SSOURCE,
+                               TR2.COLUMN_NAME as SDESTINATION
+                          from DMSCLLINKATTRS T,
+                               DMSCLATTRS     TR1,
+                               DMSCLATTRS     TR2
+                         where T.PRN = :A_LINK
+                           and T.SOURCE = TR1.RN
+                           and T.DESTINATION = TR2.RN
+                         order by T.POSITION`,
+                    [link])
+                let attrs = []
+                for (let i = 0, l = query.rows.length; i < l; i++) {
+                    const attr = query.rows[i]
+                    attrs.push({
+                        'Позиция': attr.POSITION,
+                        'Атрибут класса-приемника': attr.SDESTINATION,
+                        'Атрибут класса-источника': attr.SSOURCE
+                    })
+                }
+                return attrs
+            }
+            conU('... get links\' metadata')
+            const query = await oci.execute(`
+                select T.RN,
+                       T.CONSTRAINT_NAME,
+                       US.UNITCODE,
+                       ST.CODE            as SSTEREOTYPE,
+                                T.FOREIGN_KEY,
+                       CC.CONSTRAINT_NAME as SSRC_CONSTRAINT,
+                       T.RULE,
+                       L.CONSTRAINT_NAME  as SMASTER_LINK,
+                       M1.CODE            as SMESSAGE1,
+                       M2.CODE            as SMESSAGE2,
+                       LA.COLUMN_NAME     as SLEVEL_ATTR,
+                       PA.COLUMN_NAME     as SPATH_ATTR
+                  from DMSCLLINKS   T,
+                       UNITLIST     US,
+                       DMSLSTYPES   ST,
+                       DMSCLCONSTRS CC,
+                       DMSCLLINKS   L,
+                       DMSMESSAGES  M1,
+                       DMSMESSAGES  M2,
+                       DMSCLATTRS   LA,
+                       DMSCLATTRS   PA
+                 where T.DESTINATION = :WORKIN_CLASS
+                   and T.SOURCE = US.RN
+                   and T.STEREOTYPE = ST.RN(+)
+                   and T.SRC_CONSTRAINT = CC.RN(+)
+                   and T.MASTER_LINK = L.RN(+)
+                   and T.MESSAGE1 = M1.RN(+)
+                   and T.MESSAGE2 = M2.RN(+)
+                   and T.LEVEL_ATTR = LA.RN(+)
+                   and T.PATH_ATTR = PA.RN(+)
+                 order by T.CONSTRAINT_NAME`,
+                [classRn])
+            let links = []
+            for (let i = 0, l = query.rows.length; i < l; i++) {
+                const link = query.rows[i]
+                const names = await getResources(link.RN, 'DMSCLLINKS', 'CONSTRAINT_NOTE')
+                links.push({
+                    'Код': link.CONSTRAINT_NAME,
+                    'Наименование (RU)': names.RU,
+                    'Наименование (UK)': names.UK,
+                    'Класс-источник': link.UNITCODE,
+                    'Стереотип': link.SSTEREOTYPE,
+                    'Физическая связь': !!link.FOREIGN_KEY,
+                    'Ограничение класса-источника': link.SSRC_CONSTRAINT,
+                    'Правило': ['Нет правил', 'Каскадное удаление'][link.RULE],
+                    'Мастер-связь': link.SMASTER_LINK,
+                    'Сообщение при нарушениии cо стороны источника': link.SMESSAGE1,
+                    'Сообщение при нарушениии cо стороны приемника': link.SMESSAGE2,
+                    'Атрибут уровня иерархии': link.SLEVEL_ATTR,
+                    'Атрибут полного имени иерархии': link.SPATH_ATTR,
+                    'Атрибуты': {
+                        'Атрибут': await getAttrs()
+                    }
+                })
+            }
+            return links
+        }
+        const getViews = async () => {
+            const getParams = async (view) => {
+                let params = []
+                const paramsQuery = await oci.execute(`
+                        select T.PARAM_NAME,
+                               D.CODE as SDOMAIN
+                          from DMSCLVIEWSPARAMS T,
+                               DMSDOMAINS       D
+                         where T.PRN = :A_VIEW
+                           and T.DOMAIN = D.RN
+                         order by T.PARAM_NAME`,
+                    [view])
+                for (let i = 0, l = paramsQuery.rows.length; i < l; i++) {
+                    const param = paramsQuery.rows[i]
+                    params.push({
+                        'Наименование параметра': param.PARAM_NAME,
+                        'Домен': param.SDOMAIN
+                    })
+                }
+                return params
+            }
+            const getAttribs = async (view) => {
+                let attrs = []
+                const query = await oci.execute(`
+                        select A.POSITION,
+                               A.COLUMN_NAME as SATTR,
+                               T.COLUMN_NAME
+                          from DMSCLVIEWSATTRS T,
+                               DMSCLATTRS      A
+                         where T.PRN = :A_VIEW
+                           and T.ATTR = A.RN
+                         order by A.POSITION`,
+                    [view])
+                for (let i = 0, l = query.rows.length; i < l; i++) {
+                    const attr = query.rows[i]
+                    attrs.push({
+                        'Атрибут класса': attr.SATTR,
+                        'Имя колонки': attr.COLUMN_NAME
+                    })
+                }
+                return attrs
+            }
+            conU('... get views\' metadata')
+            const query = await oci.execute(`
+                select T.RN,
+                       T.VIEW_NAME,
+                       T.CUSTOM_QUERY,
+                       T.ACCESSIBILITY,
+                       T.QUERY_SQL
+                  from DMSCLVIEWS T
+                 where T.PRN = :WORKIN_CLASS
+                 order by T.VIEW_NAME`,
+                [classRn])
+            let views = []
+            for (let i = 0, l = query.rows.length; i < l; i++) {
+                const view = query.rows[i]
+                const names = await getResources(view.RN, 'DMSCLVIEWS', 'VIEW_NOTE')
+                views.push({
+                    'Имя': view.VIEW_NAME,
+                    'Наименование (RU)': names.RU,
+                    'Наименование (UK)': names.UK,
+                    'Тип': ['Представление', 'Запрос'][view.CUSTOM_QUERY],
+                    'Вызывается с клиента': !!view.ACCESSIBILITY,
+                    'Текст запроса': view.QUERY_SQL,
+                    'Параметры': {
+                        'Параметр': view.CUSTOM_QUERY ? await getParams(view.RN) : null
+                    },
+                    'Атрибуты': {
+                        'Атрибут': await getAttribs(view.RN)
+                    }
+                })
+            }
+            return views
+        }
+        const getShowMethods = async () => {
+            const settingsFileName = 'Settings.xml'
+            const getParams = async (showMethod) => {
+                let params = []
+                const query = await oci.execute(`
+                    select MP.RN,
+                           CA.COLUMN_NAME,
+                           MP.IN_CODE,
+                           MP.OUT_CODE,
+                           MP.DATA_TYPE,
+                           MP.DIRECT_SQL,
+                           MP.BACK_SQL
+                      from UNITPARAMS MP,
+                           DMSCLATTRS CA
+                     where MP.PARENT_METHOD = :A_METHOD
+                       and MP.ATTRIBUTE = CA.RN(+)
+                     order by MP.TECHNOLOGY,
+                              MP.IN_CODE,
+                              MP.OUT_CODE`,
+                    [showMethod])
+                for (let i = 0; i < query.rows.length; i++) {
+                    const param = query.rows[i]
+                    const names = await getResources(param.RN, 'UNITPARAMS', 'PARAMNAME')
+                    params.push({
+                        'Атрибут класса': param.COLUMN_NAME,
+                        'Наименование (RU)': names.RU,
+                        'Наименование (UK)': names.UK,
+                        'Имя входного параметра': param.IN_CODE,
+                        'Имя выходного параметра': param.OUT_CODE,
+                        'Тип данных': ['Строка', 'Дата', 'Число'][param.DATA_TYPE],
+                        'Прямой запрос': param.DIRECT_SQL,
+                        'Обратный запрос': param.BACK_SQL
+                    })
+                }
+                return params
+            }
+            const getForms = async (showMethod, startPath) => {
+                const formDataName = 'Form.xml'
+                const formEventsName = 'Events'
+                const condDataName = 'ConditionForm.xml'
+                const condEventsName = 'ConditionEvents'
+                const getApps = async (form) => {
+                    let apps = []
+                    const query = await oci.execute(`
+                        select FLA.APPCODE
+                          from USERFORMLNKAPPS FLA
+                         where FLA.PRN = :A_FORM_RN
+                         order by FLA.APPCODE`,
+                        [form])
+                    for (let i = 0, l = query.rows.length; i < l; i++) {
+                        apps.push({
+                            'Код': query.rows[i].APPCODE
+                        })
+                    }
+                    return apps
+                }
+                let forms = []
+                const query = await oci.execute(`
+                   select T.RN,
+                          T.FORM_CLASS,
+                          T.FORM_NAME,
+                          T.EVENTS_LANGUAGE,
+                          F_USERFORMS_GET_UAMODULE(T.FORM_UAMODULE) as SFORM_UAMODULE,
+                          T.FORM_LANGUAGE,
+                          T.FORM_ACTIVE,
+                          T.LINK_APPS,
+                          T.LINK_PRIVS,
+                          T.FORM_DATA,
+                          T.FORM_EVENTS,
+                          T.FORM_DATA_EXT,
+                          T.FORM_EVENTS_EXT
+                     from USERFORMS T
+                    where SHOW_METHOD = :A_METHOD
+                      and FORM_KIND = 5
+                      and FORM_ID = 0
+                    order by T.FORM_CLASS,
+                             T.FORM_LANGUAGE`,
+                    [showMethod])
+                for (let i = 0; i < query.rows.length; i++) {
+                    const form = query.rows[i]
+                    const relPath = `${startPath}/Forms/${form.FORM_CLASS}`
+                    const eventExt = form.EVENTS_LANGUAGE ? ['vbs', 'js', 'pas', 'pl', 'py'][form.EVENTS_LANGUAGE] : 'txt'
+                    if (form.FORM_DATA) await saveClob1251Xml(form.FORM_DATA, classDir + relPath, `${form.FORM_LANGUAGE}_${formDataName}`)
+                    if (form.FORM_EVENTS) await saveClob(form.FORM_EVENTS, classDir + relPath, `${form.FORM_LANGUAGE}_${formEventsName}.${eventExt}`)
+                    if (form.FORM_DATA_EXT) await saveClob1251Xml(form.FORM_DATA_EXT, classDir + relPath, `${form.FORM_LANGUAGE}_${condDataName}`)
+                    if (form.FORM_EVENTS_EXT) await saveClob(form.FORM_EVENTS_EXT, classDir + relPath, `${form.FORM_LANGUAGE}_${condEventsName}.${eventExt}`)
+                    forms.push({
+                        'Имя': form.FORM_CLASS,
+                        'Наименование': form.FORM_NAME,
+                        'Тип скрипта': form.EVENTS_LANGUAGE ? ['VBScript', 'JScript', 'DelphiScript', 'PerlScript', 'PythonScript'][form.EVENTS_LANGUAGE] : null,
+                        'Пользовательское приложение (форма)': form.SFORM_UAMODULE,
+                        'Национальный язык формы': form.FORM_LANGUAGE,
+                        'Доступна для использования': !!form.FORM_ACTIVE,
+                        'Учитывать связи с приложениями': !!form.LINK_APPS,
+                        'Учитывать назначение пользователям, ролям': !!form.LINK_PRIVS,
+                        'Приложения': form.LINK_APPS ? {
+                            'Приложение': await getApps(form.RN)
+                        } : null,
+                        'Файл' : form.FORM_DATA ? `.${relPath}/${form.FORM_LANGUAGE}_${formDataName}` : null
+                    })
+                }
+                return forms
+            }
+            let showMethods = []
+            conU('... get show methods\' metadata')
+            const query = await oci.execute(`
+                  select SM.RN,
+                         SM.METHOD_CODE,
+                         SM.TECHNOLOGY,
+                         (select I.CODE
+                            from SYSIMAGES I
+                           where I.RN = SM.SYSIMAGE) as SSYSIMAGE,
+                         SM.COND_TYPE,
+                         SM.USEFORVIEW,
+                         SM.USEFORLINKS,
+                         SM.USEFORDICT,
+                         SM.SETTINGS
+                    from UNIT_SHOWMETHODS SM
+                   where SM.PRN = :WORKIN_CLASS
+                          order by SM.TECHNOLOGY,
+                     SM.METHOD_CODE`,
+                [classRn])
+            for (let i = 0, l = query.rows.length; i < l; i++) {
+                const showMethod = query.rows[i]
+                const names = await getResources(showMethod.RN, 'UNIT_SHOWMETHODS', 'METHOD_NAME')
+                const relpath = `/ShowMethods/${showMethod.METHOD_CODE}`
+                if (showMethod.SSYSIMAGE) await saveIcons(classDir + relpath, showMethod.SSYSIMAGE)
+                if (showMethod.SETTINGS) await saveClob1251Xml(showMethod.SETTINGS, classDir + relpath, settingsFileName)
+                showMethods.push({
+                    'Мнемокод': showMethod.METHOD_CODE,
+                    'Наименование (RU)': names.RU,
+                    'Наименование (UK)': names.UK,
+                    'Технология производства': ['Стандарт', 'Конструктор'][showMethod.TECHNOLOGY],
+                    'Пиктограмма': showMethod.SSYSIMAGE,
+                    'Тип условий отбора': ['Клиент', 'Сервер'][showMethod.COND_TYPE],
+                    'Использовать для отображения по умолчанию': !!showMethod.USEFORVIEW,
+                    'Использовать для отображения через связи документов': !!showMethod.USEFORLINKS,
+                    'Использовать для отображения в качестве словаря': !!showMethod.USEFORDICT,
+                    'Настройка': showMethod.SETTINGS ? `.${relpath}/${settingsFileName}` : null,
+                    'Параметры': {
+                        'Параметр': await getParams(showMethod.RN)
+                    },
+                    'Формы': {
+                        'Форма': await getForms(showMethod.RN, relpath)
+                    }
+                })
+                // todo: ShowMethodForms
+            }
+            return showMethods
+        }
+        const getMethods = async () => {
+            const getParams = async (method) => {
+                let params = []
+                const query = await oci.execute(`
+                    select T.RN,
+                           T.POSITION,
+                           T.NAME,
+                           T.INOUT,
+                           D.CODE         as SDOMAIN,
+                           T.LINK_TYPE,
+                           A.COLUMN_NAME,
+                           T.DEF_NUMBER,
+                           T.CONTEXT,
+                           T.DEF_STRING,
+                           T.DEF_DATE,
+                           F.CODE         as LINKED_FUNCTION,
+                           T.ACTION_PARAM,
+                           T.MANDATORY
+                      from DMSCLMETPARMS T,
+                           DMSDOMAINS    D,
+                           DMSCLATTRS    A,
+                           DMSCLMETHODS  F
+                     where T.PRN = :A_METHOD
+                       and T.DOMAIN = D.RN
+                       and T.LINK_ATTR = A.RN(+)
+                       and T.LINKED_FUNCTION = F.RN(+)
+                     order by T.POSITION`,
+                    [method])
+                for (let i = 0, l = query.rows.length; i < l; i++) {
+                    const param = query.rows[i]
+                    const names = await getResources(param.RN, 'DMSCLMETPARMS', 'NOTE')
+                    params.push({
+                        'Имя': param.NAME,
+                        'Наименование (RU)': names.RU,
+                        'Наименование (UK)': names.UK,
+                        'Позиция': param.POSITION,
+                        'Тип': ['Входной/выходной (in/out)', 'Входной (in)', 'Выходной (out)'][param.INOUT],
+                        'Домен': param.SDOMAIN,
+                        'Тип привязки': [
+                            'Нет',
+                            'Атрибут',
+                            'Контекст',
+                            'Значение',
+                            'Результат функции',
+                            'Параметр действия'
+                        ][param.LINK_TYPE],
+                        'Атрибут': param.COLUMN_NAME,
+                        'Значение': (param.DEF_NUMBER || param.DEF_STRING || param.DEF_DATE) ? coalesce([param.DEF_NUMBER, param.DEF_STRING, param.DEF_DATE]) : null,
+                        'Контекст': contexts[param.CONTEXT],
+                        'Функция': param.LINKED_FUNCTION,
+                        'Параметр действия': param.ACTION_PARAM,
+                        'Обязательный для заполнения': !!param.MANDATORY
+                    })
+                }
+                return params
+            }
+            let methods = []
+            conU('... get methods\' metadata')
+            const q = await oci.execute(`
+                select T.RN,
+                       T.CODE,
+                       T.METHOD_TYPE,
+                       T.ACCESSIBILITY,
+                       T.PACKAGE,
+                       T.NAME,
+                       (select D.CODE
+                          from DMSCLMETPARMS P,
+                               DMSDOMAINS    D
+                         where P.DOMAIN = D.RN
+                           and P.PRN = T.RN
+                           and P.NAME = 'RESULT'
+                           and T.METHOD_TYPE = 1) as SRESULT_DOMAIN
+                  from DMSCLMETHODS T
+                 where T.PRN = :WORKIN_CLASS
+                 order by T.CODE`,
+                [classRn])
+            for (let i = 0, l = q.rows.length; i < l; i++) {
+                const m = q.rows[i]
+                const names = await getResources(m.RN, 'DMSCLMETHODS', 'NOTE')
+                const comments = await getResources(m.RN, 'DMSCLMETHODS', 'COMMENT')
+                methods.push({
+                    'Мнемокод': m.CODE,
+                    'Тип метода': ['Процедура', 'Функция'][m.METHOD_TYPE],
+                    'Доступность': ['Базовый', 'Клиентский'][m.ACCESSIBILITY],
+                    'Пакет': m.PACKAGE,
+                    'Процедура/функция': m.NAME,
+                    'Наименование (RU)': names.RU,
+                    'Наименование (UK)': names.UK,
+                    'Примечание (RU)': comments.RU,
+                    'Примечание (UK)': comments.UK,
+                    'Домен результата функции': m.SRESULT_DOMAIN,
+                    'Параметры': {
+                        'Параметр': await getParams(m.RN)
+                    }
+                })
+            }
+            return methods
+        }
         conU('... get class definition')
         let classQuery = await oci.execute(`
              select CL.*,
@@ -332,7 +729,7 @@ const exportClass = async (classCode, dir) => {
         let classRow = classQuery.rows[0]
 
         let className = await getResources(classRow.RN, 'UNITLIST', 'UNITNAME')
-
+        await saveIcons(classDir, classRow.SSYSIMAGE)
         classObject = {
             'Код': classRow.UNITCODE,
             'Наименование (RU)': className.RU,
@@ -356,6 +753,18 @@ const exportClass = async (classCode, dir) => {
             },
             'Ограничения': {
                 'Ограничение': await getConstraints()
+            },
+            'Связи': {
+                'Связь': await getLinks()
+            },
+            'Представления': {
+                'Представление': await getViews()
+            },
+            'Методы вызова': {
+                'Метод вызова': await getShowMethods()
+            },
+            'Методы': {
+                'Метод': await getMethods()
             }
         }
         return classObject
@@ -363,7 +772,6 @@ const exportClass = async (classCode, dir) => {
     conE(`Processing class ${classCode}...`)
     let classRn = await getClassRn(classCode)
     let classDir = dir + '/' + classCode
-    await saveIcons()
     let domainTable = await createDomainsTable()
     let classTable = await createClassTable()
     let tomlContent = {
@@ -471,12 +879,7 @@ const closeConnection = async () => {
     return c
 }
 
-const saveLob = async (lob, path, filename, codepage) => {
-    if (lob.type === oracledb.CLOB) {
-        if (codepage) {
-            lob.setEncoding(codepage)  // set the encoding so we get a 'string' not a 'buffer'  ('windows-1251', 'utf8')
-        }
-    }
+const saveBlob = async (lob, path, filename) => {
     lob.on('error', (err) => {
         throw err
     })
@@ -490,7 +893,19 @@ const saveLob = async (lob, path, filename, codepage) => {
         throw err
     })
     lob.pipe(outStream)
+
 }
+
+const saveClob1251Xml = async (xml, path, filename) => {
+    fs.ensureDirSync(path)
+    await fs.writeFile(`${path}/${filename}`, iconv.encode(pd.xml(xml), 'win1251'))
+}
+
+const saveClob = async (clob, path, filename) => {
+    fs.ensureDirSync(path)
+    await fs.writeFile(`${path}/${filename}`, clob)
+}
+
 main()
     .then(() => {
         process.exit(0)
