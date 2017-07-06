@@ -1,7 +1,7 @@
 /**
  * Created by igorgo on 05.07.2017.
  */
-let utils = require('./utils'),
+const utils = require('./utils'),
     xpath = require('xpath'),
     Dom = require('xmldom').DOMParser,
     tomlify = require('tomlify-j0.4')
@@ -25,22 +25,30 @@ const CONTEXTS = {
     SHOWMETHOD_FORM_KIND = 5,
     ACTION_FORM_KIND = 3
 
+
 const nullEmptyArray = (array) => {
     return (Array.isArray(array) && array.length > 0) ? array : null
 }
 
 class Extractor {
-    constructor(oci) {
-        this.oci = oci
+    constructor() {
+        let gVars = require('./index')
+        this.language = gVars.language
+        this.R = require('./res/strings/extractor-' + this.language)
+        this.oci = gVars.oci
     }
 
     async extractClass(classCode, dir) {
         this.classCode = classCode
+        this.classInfo = await this._getClassInfo()
+        let className = ''
+        if (this.language === 'ru') className = ' - ' + this.classInfo.RU
+        if (this.language === 'uk') className = ' - ' + this.classInfo.UK
+        utils.conE(`${this.R.procClass} ${this.classCode}${className}…`)
         this.dir = dir
-        const classInfo = await this._getClassInfo()
-        this.classDir = this.dir + '/' + this.classCode
-        this.classRn = classInfo.RN
-        utils.conE(`Processing class ${this.classCode}...`)
+
+        this.classDir = this.dir + '/' + this.classInfo.path.replace('/','/SubClasses/')
+        this.classRn = this.classInfo.rn
         const tomlContent = {
             'Используемые домены': {
                 'Домен': await this._getDomainsMeta()
@@ -48,7 +56,6 @@ class Extractor {
             'Класс': await this._getClassMeta()
         }
         await utils.saveTextFile(tomlify(tomlContent, null, 4), this.classDir, 'Metadata.toml')
-        utils.conU('  ...done')
         return {
             classRn: this.classRn,
             classCode: this.classCode,
@@ -92,7 +99,7 @@ class Extractor {
     }
 
     async _getClassInfo() {
-        utils.conU('... get reg num of class')
+        // utils.conU(this.R.classInfo)
         let r = await this.oci.execute(`
             select RN, PATH
               from (select U.UNITCODE,
@@ -105,13 +112,16 @@ class Extractor {
             [this.classCode]
         )
         if (r.rows.length > 0) {
+            const names = await this._getResources(r.rows[0]['RN'], 'UNITLIST', 'UNITNAME')
             return {
-                RN: r.rows[0]['RN'],
-                PATH: r.rows[0]['PATH']
+                rn: r.rows[0]['RN'],
+                path: r.rows[0]['PATH'],
+                RU: names.RU,
+                UK: names.UK
             }
         }
         else {
-            throw 'Class not found'
+            throw this.R.clNotFnd
         }
     }
 
@@ -188,7 +198,7 @@ class Extractor {
     }
 
     async _getMetadataDomainList() {
-        utils.conU('... get list of metadata\'s domains')
+        utils.conU(this.R.metaDomains)
         let query = await this.oci.execute(`
                 select CODE
                   from DMSDOMAINS
@@ -218,7 +228,7 @@ class Extractor {
     }
 
     async _getConditionDomainList() {
-        utils.conU('... get list of conditions\' domains')
+        utils.conU(this.R.condDomains)
         let query = await this.oci.execute(`
                 select settings as SETTINGS
                   from UNIT_SHOWMETHODS
@@ -238,7 +248,7 @@ class Extractor {
     }
 
     async _getClassMeta() {
-        utils.conU('... get class definition')
+        utils.conU(this.R.classDef)
         let classQuery = await this.oci.execute(`
              select CL.*,
                     (select I.CODE from SYSIMAGES I where I.RN = CL.SYSIMAGE) as SSYSIMAGE,
@@ -387,7 +397,7 @@ class Extractor {
     }
 
     async _getTableMeta(tableName) {
-        utils.conU('... get table definition')
+        utils.conU(this.R.tabDef)
         const query = await this.oci.execute(
             'select TL.* from TABLELIST TL where TL.TABLENAME = :TABLENAME',
             [tableName])
@@ -403,7 +413,7 @@ class Extractor {
     }
 
     async _getAttributesMeta() {
-        utils.conU('... get attributes\' metadata')
+        utils.conU(this.R.attrMeta)
         const attrsQuery = await this.oci.execute(`
                 select CA.*,
                        DM.CODE            as SDOMAIN,
@@ -442,7 +452,7 @@ class Extractor {
             5: 'Обязательность',
             6: 'Неизменяемость'
         }
-        utils.conU('... get constraints\' metadata')
+        utils.conU(this.R.consMeta)
         const query = await this.oci.execute(`
                 select T.*,
                        MES.CODE       as MES_CODE,
@@ -498,7 +508,7 @@ class Extractor {
 
     async _getLinksMeta() {
         let links = []
-        utils.conU('... get links\' metadata')
+        utils.conU(this.R.linkMeta)
         const query = await this.oci.execute(`
                 select T.RN,
                        T.CONSTRAINT_NAME,
@@ -584,7 +594,7 @@ class Extractor {
 
     async _getViewsMeta() {
         let views = []
-        utils.conU('... get views\' metadata')
+        utils.conU(this.R.viewMeta)
         const query = await this.oci.execute(`
                 select T.RN,
                        T.VIEW_NAME,
@@ -661,7 +671,7 @@ class Extractor {
 
     async _getMethodsMeta() {
         let methods = []
-        utils.conU('... get methods\' metadata')
+        utils.conU(this.R.metMeta)
         const q = await this.oci.execute(`
                 select T.RN,
                        T.CODE,
@@ -765,7 +775,7 @@ class Extractor {
     async _getShowMethodsMeta() {
         const settingsFileName = 'Settings.xml'
         let showMethods = []
-        utils.conU('... get show methods\' metadata')
+        utils.conU(this.R.shMetMeta)
         const query = await this.oci.execute(`
                   select SM.RN,
                          SM.METHOD_CODE,
@@ -910,7 +920,7 @@ class Extractor {
             16: 'Стандартный файловый импорт'
         }
         let actions = []
-        utils.conU('... get actions\' metadata')
+        utils.conU(this.R.actMeta)
         const query = await this.oci.execute(`
                select UF.RN,
                     UF.STANDARD,
@@ -1131,7 +1141,7 @@ class Extractor {
             9: {label:'Внешние ключи', extension:'sql'}
         }
         let objects = []
-        utils.conU('... get objects\' metadata')
+        utils.conU(this.R.objMeta)
         const query = await this.oci.execute(`
             select T.RN,
                    T.OBJTYPE,

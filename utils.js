@@ -1,10 +1,12 @@
 /**
  * Created by igorgo on 05.07.2017.
  */
-let fs = require('fs-extra'),
+const fs = require('fs-extra'),
     iconv = require('iconv-lite'),
     pd = require('pretty-data2').pd,
-    conU = require('log-update')
+    inquirer = require('inquirer')
+
+let ui = new inquirer.ui.BottomBar()
 
 class Utils {
     static async saveClob1251Xml(xml, path, filename) {
@@ -40,15 +42,18 @@ class Utils {
     }
 
     static conU(message) {
-        conU(message)
+        ui.updateBottomBar(message)
+        // conU(message)
     }
 
     static con(message) {
-        process.stdout.write(message)
+        // process.stdout.write(message)
+        ui.writeLog(message)
     }
 
     static conE(message) {
-        process.stdout.write(message + '\n')
+        //process.stdout.write(message + '\n')
+        ui.writeLog(message + '\n')
     }
 
     static coalesce(...values) {
@@ -65,8 +70,8 @@ class Utils {
     }
 
     /* static fixNum(n) {
-        return n ? n.toFixed(0) : null
-    } */
+     return n ? n.toFixed(0) : null
+     } */
 }
 
 module.exports = Utils
