@@ -12,7 +12,12 @@ class Utils {
         await fs.writeFile(`${path}/${filename}`, iconv.encode(pd.xml(xml), 'win1251'))
     }
 
-    static async saveClob(clob, path, filename) {
+    static async saveClob1251(clob, path, filename) {
+        fs.ensureDirSync(path)
+        await fs.writeFile(`${path}/${filename}`, iconv.encode(clob, 'win1251'))
+    }
+
+    static async saveTextFile(clob, path, filename) {
         fs.ensureDirSync(path)
         await fs.writeFile(`${path}/${filename}`, clob)
     }
@@ -55,9 +60,13 @@ class Utils {
         return null
     }
 
-    static fixNum(n) {
-        return n ? n.toFixed(0) : null
+    static sanitizeFilename(filename) {
+        return filename.replace(/[|&;$%@":/<>()+,]/g, '_')
     }
+
+    /* static fixNum(n) {
+        return n ? n.toFixed(0) : null
+    } */
 }
 
 module.exports = Utils
