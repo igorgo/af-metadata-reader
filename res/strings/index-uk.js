@@ -27,7 +27,7 @@ const strings = {
     connectedMessage: ' …підключено!',
     closeDbMessage: 'Завершення сеансу роботи з БД… ',
     closedDbMessage: ' …завершено!',
-
+    extrSucc: 'Вивантаження успішно завершено!'
 }
 
 module.exports = strings

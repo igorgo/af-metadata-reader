@@ -27,6 +27,7 @@ const strings = {
     connectedMessage: ' …connected!',
     closeDbMessage: 'Closing db connection… ',
     closedDbMessage: ' …closed!',
+    extrSucc: 'The extraction have been finished successfully!'
 }
 
 module.exports = strings

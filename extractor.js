@@ -762,7 +762,7 @@ class Extractor {
                 ][param['LINK_TYPE']],
                 'Атрибут': param['COLUMN_NAME'],
                 'Значение': (param['DEF_NUMBER'] || param['DEF_STRING'] || param['DEF_DATE']) ?
-                    utils.coalesce([param['DEF_NUMBER'], param['DEF_STRING'], param['DEF_DATE']]) : null,
+                    utils.coalesce(param['DEF_NUMBER'], param['DEF_STRING'], param['DEF_DATE']) : null,
                 'Контекст': param['CONTEXT'] !== null ? CONTEXTS[param['CONTEXT']] : null,
                 'Функция': param['LINKED_FUNCTION'],
                 'Параметр действия': param['ACTION_PARAM'],

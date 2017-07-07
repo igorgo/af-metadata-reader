@@ -11,7 +11,7 @@ const
 
 let R = require('./res/strings/index-en')
 
-let oci, language
+let oci, language, params
 
 oracledb.maxRows = 10000
 oracledb.outFormat = oracledb.OBJECT // {outFormat : oracledb.ARRAY}
@@ -34,19 +34,55 @@ const main = async () => {
     let params = await askParams()
     oci = await connectDB(params.username, params.password, params.dbname)
     exports.oci = oci
-    await exportClass(params.singleClass, params.directory)
+    let classList = await getClassesList()
+    for (var i = 0; i < classList.length; i++) {
+        await exportClass(classList[i])
+    }
+    utils.conE(R.extrSucc)
     return await closeConnection()
 }
 
-
-const exportClass = async (classCode, dir) => {
-    const extractor = new Extractor()
-    await extractor.extractClass(classCode, dir)
-
+const getClassesList = async () => {
+    if (params.singleClass && !params.recursive) return [params.singleClass]
+    let binds = {}
+    let sql = 'select U.UNITCODE from UNITLIST U where 1=1'
+    if (params.extractMoreType === 'G' || params.extractMoreType === 'R') {
+        sql += ' and NVL(U.MASTERCODE, U.UNITCODE) >= :UFROM'
+        binds['UFROM'] = params.startClass
+    }
+    if (params.extractMoreType === 'L' || params.extractMoreType === 'R') {
+        sql += ' and NVL(U.MASTERCODE, U.UNITCODE) <= :UTILL'
+        binds['UTILL'] = params.finishClass
+    }
+    if (params.extractTechType && params.extractTechType !== 'A') {
+        sql += ' and U.TECHNOLOGY = :UTECH'
+        binds['UTECH'] = params.extractTechType === 'S' ? 0 : 1
+    }
+    if (params.extractOnlyFilled) {
+        sql += ' and exists (select * from DMSCLATTRS A where A.PRN = U.RN)'
+    }
+    sql += ' connect by U.PARENTCODE = prior U.UNITCODE start with'
+    if (params.singleClass) {
+        sql += ' U.UNITCODE = :UCODE'
+        binds['UCODE'] = params.singleClass
+    }
+    else {
+        sql+= ' U.PARENTCODE is null'
+    }
+    const res = (await oci.execute(sql,binds)).rows
+    return res.map(i => {return i['UNITCODE']})
 }
 
+
+const exportClass = async (classCode) => {
+    const extractor = new Extractor()
+    await extractor.extractClass(classCode, params.directory)
+}
+
+
+
 const askParams = async () => {
-    let params = {}
+    params = {}
     program
         .arguments('<class>')
         .option('-b, --dbname <dbname>', R.dbAliasPrompt)
@@ -143,13 +179,16 @@ const askParams = async () => {
             message: R.recursivePrompt,
             name: 'recursive'
         })).recursive
+    } else {
+        params.recursive = true
     }
-    params.extractOnlyFilled = (await inquirer.prompt({
-        type: 'confirm',
-        name: 'extractOnlyFilled',
-        message: R.onlyFilledPrompt
-    })).extractOnlyFilled
-
+    if (params.recursive) {
+        params.extractOnlyFilled = (await inquirer.prompt({
+            type: 'confirm',
+            name: 'extractOnlyFilled',
+            message: R.onlyFilledPrompt
+        })).extractOnlyFilled
+    }
     return params
 }
 
