@@ -46,9 +46,9 @@ class Extractor {
         if (this.language === 'ru') className = ' - ' + this.classInfo.RU
         if (this.language === 'uk') className = ' - ' + this.classInfo.UK
         utils.conE(`${this.R.procClass} ${this.classCode}${className}…`)
-        this.dir = dir
+        this.dir = path.posix.normalize(dir)
 
-        this.classDir = this.dir + '/' + this.classInfo.path.replace('/','/SubClasses/')
+        this.classDir = path.posix.join(this.dir, this.classInfo.path.replace('/', '/SubClasses/'))
         this.classRn = this.classInfo.rn
         const tomlContent = {
             'Используемые домены': {
@@ -64,14 +64,14 @@ class Extractor {
         }
     }
 
-    async _saveIcons(path, code) {
+    async _saveIcons(savePath, code) {
         let query = await this.oci.execute(
             ' select SY.*  from SYSIMAGES SY  where code = :CODE',
             [code]
         )
         let icon = query.rows[0]
-        await utils.saveBlob(icon['SMALL_IMAGE'], path, `${icon['CODE']}_16.bmp`)
-        await utils.saveBlob(icon['LARGE_IMAGE'], path, `${icon['CODE']}_24.bmp`)
+        await utils.saveBlob(icon['SMALL_IMAGE'], savePath, `${icon['CODE']}_16.bmp`)
+        await utils.saveBlob(icon['LARGE_IMAGE'], savePath, `${icon['CODE']}_24.bmp`)
     }
 
     async _getResources(rn, tab, col) {
@@ -346,8 +346,8 @@ class Extractor {
         const query = await this.oci.execute(sql, binds)
         for (let i = 0; i < query.rows.length; i++) {
             const formRecord = query.rows[i]
-            const relPath = path.join(curPath, 'Forms', utils.hashFormName(formRecord['FORM_CLASS']))
-            const fullPath = path.join(this.classDir,  relPath)
+            const relPath = path.posix.join(curPath, 'Forms', utils.hashFormName(formRecord['FORM_CLASS']))
+            const fullPath = path.posix.join(this.classDir, relPath)
             const eventExt = formRecord['EVENTS_LANGUAGE'] ?
                 ['vbs', 'js', 'pas', 'pl', 'py'][formRecord['EVENTS_LANGUAGE']] : 'txt'
             if (formRecord['FORM_DATA']) {
@@ -392,7 +392,7 @@ class Extractor {
                 'Приложения': formRecord['LINK_APPS'] ? {
                     'Приложение': await this._getFormApplications(formRecord['RN'])
                 } : null,
-                'Файл': formRecord['FORM_DATA'] ? `./${relPath}/${formRecord['FORM_LANGUAGE']}_${formDataName}*.*` : null
+                'Файл': formRecord['FORM_DATA'] ? path.posix.join('.', relPath, `${formRecord['FORM_LANGUAGE']}_${formDataName}`) : null
             })
         }
         return nullEmptyArray(forms)
@@ -426,7 +426,7 @@ class Extractor {
                    and CA.DOMAIN = DM.RN
                    and CA.REF_LINK = CL.RN(+)
                    and CA.REF_ATTRIBUTE = CAR.RN(+)
-                 order by CA.POSITION`,
+                 order by CA.COLUMN_NAME`,
             [this.classRn])
         let attrs = []
         for (let i = 0, len = attrsQuery.rows.length; i < len; i++) {
@@ -498,7 +498,7 @@ class Extractor {
                           from DMSCLCONATTRS T, DMSCLATTRS TR1
                          where T.PRN = :A_CONS
                            and T.ATTRIBUTE = TR1.RN
-                         order by T.POSITION
+                         order by TR1.COLUMN_NAME
                      `, [constrRn])
         return nullEmptyArray(query.rows.map((attr) => {
             return {
@@ -659,7 +659,7 @@ class Extractor {
                                DMSCLATTRS      A
                          where T.PRN = :A_VIEW
                            and T.ATTR = A.RN
-                         order by A.POSITION`,
+                         order by A.COLUMN_NAME`,
             [viewRn])
         for (let i = 0, l = query.rows.length; i < l; i++) {
             const attr = query.rows[i]
@@ -742,7 +742,7 @@ class Extractor {
                        and T.DOMAIN = D.RN
                        and T.LINK_ATTR = A.RN(+)
                        and T.LINKED_FUNCTION = F.RN(+)
-                     order by T.POSITION`,
+                     order by T.NAME`,
             [methodRn])
         for (let i = 0, l = query.rows.length; i < l; i++) {
             const param = query.rows[i]
@@ -798,12 +798,12 @@ class Extractor {
         for (let i = 0, l = query.rows.length; i < l; i++) {
             const showMethod = query.rows[i]
             const names = await this._getResources(showMethod['RN'], 'UNIT_SHOWMETHODS', 'METHOD_NAME')
-            const relpath = path.join('ShowMethods', showMethod['METHOD_CODE'])
+            const relpath = path.posix.join('ShowMethods', showMethod['METHOD_CODE'])
             if (showMethod['SSYSIMAGE']) {
-                await this._saveIcons(path.join(this.classDir,relpath), showMethod['SSYSIMAGE'])
+                await this._saveIcons(path.posix.join(this.classDir, relpath), showMethod['SSYSIMAGE'])
             }
             if (showMethod['SETTINGS']) {
-                await utils.saveClob1251Xml(showMethod['SETTINGS'], this.classDir + '/' + relpath, settingsFileName)
+                await utils.saveClob1251Xml(showMethod['SETTINGS'], path.posix.join(this.classDir, relpath), settingsFileName)
             }
             showMethods.push({
                 'Мнемокод': showMethod['METHOD_CODE'],
@@ -815,7 +815,7 @@ class Extractor {
                 'Использовать для отображения по умолчанию': !!showMethod['USEFORVIEW'],
                 'Использовать для отображения через связи документов': !!showMethod['USEFORLINKS'],
                 'Использовать для отображения в качестве словаря': !!showMethod['USEFORDICT'],
-                'Настройка': showMethod['SETTINGS'] ? `./${relpath}/${settingsFileName}` : null,
+                'Настройка': showMethod['SETTINGS'] ? path.posix.join('.', relpath, settingsFileName) : null,
                 'Параметры': {
                     'Параметр': await this._getShowMethodParamsMeta(showMethod['RN'])
                 },
@@ -949,9 +949,9 @@ class Extractor {
             [this.classRn])
         for (let i = 0, l = query.rows.length; i < l; i++) {
             const action = query.rows[i]
-            const curPath = path.join('Actions',action['CODE'])
+            const curPath = path.posix.join('Actions', action['CODE'])
             if (action['SSYSIMAGE']) {
-                await this._saveIcons(path.join(this.classDir,curPath), action['SSYSIMAGE'])
+                await this._saveIcons(path.posix.join(this.classDir, curPath), action['SSYSIMAGE'])
             }
             const names = await this._getResources(action['RN'], 'UNITFUNC', 'NAME')
             actions.push({
@@ -1022,7 +1022,7 @@ class Extractor {
                and T.DOMAIN = D.RN
                and T.LINK_ATTR = A.RN(+)
                and T.LINKED_FUNCTION = F.RN(+)
-             order by T.POSITION`,
+             order by T.NAME`,
             [actionRn])
         for (let i = 0, l = query.rows.length; i < l; i++) {
             const param = query.rows[i]
@@ -1065,7 +1065,7 @@ class Extractor {
             methods.push({
                 'Метод': method['CODE'],
                 'Формы': {
-                    'Форма': await this._getFormsMeta(ACTION_FORM_KIND, null, method['RN'], 'DMSCLACTIONSMTH', path.join(curPath,'Methods',method['CODE']))
+                    'Форма': await this._getFormsMeta(ACTION_FORM_KIND, null, method['RN'], 'DMSCLACTIONSMTH', path.posix.join(curPath, 'Methods', method['CODE']))
                 }
             })
         }
@@ -1105,7 +1105,7 @@ class Extractor {
             const step = query.rows[i]
             if (step['SHOWPARAMS']) {
                 await utils.saveClob1251Xml(step['SHOWPARAMS'],
-                    path.join(this.classDir,curPath,showParamsFolderName),
+                    path.posix.join(this.classDir, curPath, showParamsFolderName),
                     step['POSITION'] + '.xml')
             }
             steps.push({
@@ -1119,7 +1119,7 @@ class Extractor {
                 'Раздел': steps['SSHOWUNIT'],
                 'Метод вызова': step['SSHOWMETHOD'],
                 'Параметры метода вызова': step['SHOWPARAMS'] ?
-                    `./${path.join(curPath,showParamsFolderName)}/${step['POSITION']}.xml` : null,
+                    path.posix.join('.', curPath, showParamsFolderName, `${step['POSITION']}.xml`) : null,
                 'Режим вызова': step['STPTYPE'] === 1 ? ['Обычный', 'Модальный', 'Как словарь'][step['SHOWKIND']] : null,
                 'Пользовательский отчет': step['SUSERREPORT'],
                 'Модуль пользовательского приложения': step['SUAMODULE'],
@@ -1131,16 +1131,16 @@ class Extractor {
 
     async _getObjectsMeta() {
         const OBJECT_TYPES = {
-            0: {label:'Таблица', extension:'sql'},
-            1: {label:'Индекс', extension:'sql'},
-            2: {label:'Триггер', extension:'trg'},
-            3: {label:'Процедура', extension:'prc'},
-            4: {label:'Функция', extension:'fnc'},
-            5: {label:'Пакет', extension:'pck'},
-            6: {label:'Пакет (тело)', extension:'pkb'},
-            7: {label:'Представление', extension:'vw'},
-            8: {label:'Последовательность', extension:'sql'},
-            9: {label:'Внешние ключи', extension:'sql'}
+            0: {label: 'Таблица', extension: 'sql'},
+            1: {label: 'Индекс', extension: 'sql'},
+            2: {label: 'Триггер', extension: 'trg'},
+            3: {label: 'Процедура', extension: 'prc'},
+            4: {label: 'Функция', extension: 'fnc'},
+            5: {label: 'Пакет', extension: 'pck'},
+            6: {label: 'Пакет (тело)', extension: 'pkb'},
+            7: {label: 'Представление', extension: 'vw'},
+            8: {label: 'Последовательность', extension: 'sql'},
+            9: {label: 'Внешние ключи', extension: 'sql'}
         }
         let objects = []
         utils.conU(this.R.objMeta)
@@ -1157,31 +1157,25 @@ class Extractor {
         )
         for (let i = 0, l = query.rows.length; i < l; i++) {
             const obj = query.rows[i]
-            const names = await this._getResources(obj['RN'],'DMSCLOBJECTS', 'CAPTION')
+            const names = await this._getResources(obj['RN'], 'DMSCLOBJECTS', 'CAPTION')
             const objPath = 'Objects'
             const filename = `${obj['NAME']}.${OBJECT_TYPES[obj['OBJTYPE']].extension}`
             if (obj['PLSQL_TEXT']) {
-                await utils.saveClob1251(obj['PLSQL_TEXT'],path.join(this.classDir,objPath), filename)
+                await utils.saveClob1251(obj['PLSQL_TEXT'], path.posix.join(this.classDir, objPath), filename)
             }
             objects.push({
-                'Тип' : OBJECT_TYPES[obj['OBJTYPE']].label,
-                'Имя' : obj['NAME'],
-                'Наименование (RU)' : names.RU,
-                'Наименование (UK)' : names.UK,
-                'Вид' : ['Базовый','Клиентский','Полный клиентский'][obj['OBJKIND']],
-                'Исходный текст' : obj['PLSQL_TEXT'] ? `./${objPath}/${filename}` : null
+                'Тип': OBJECT_TYPES[obj['OBJTYPE']].label,
+                'Имя': obj['NAME'],
+                'Наименование (RU)': names.RU,
+                'Наименование (UK)': names.UK,
+                'Вид': ['Базовый', 'Клиентский', 'Полный клиентский'][obj['OBJKIND']],
+                'Исходный текст': obj['PLSQL_TEXT'] ? path.posix.join('.', objPath, filename) : null
             })
         }
         return nullEmptyArray(objects)
     }
-
-    /* get classRegNum() {
-     return this.classRn
-     } */
-
 }
 
-// todo: extract objects
 // todo: extract options
 
 module.exports = Extractor
