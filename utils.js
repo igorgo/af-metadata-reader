@@ -4,7 +4,8 @@
 const fs = require('fs-extra'),
     iconv = require('iconv-lite'),
     pd = require('pretty-data2').pd,
-    inquirer = require('inquirer')
+    inquirer = require('inquirer'),
+    crypto = require('crypto')
 
 let ui = new inquirer.ui.BottomBar()
 
@@ -65,13 +66,19 @@ class Utils {
         return null
     }
 
+    //noinspection JSUnusedGlobalSymbols
     static sanitizeFilename(filename) {
         return filename.replace(/[|&;$%@":/<>()+,]/g, '_')
     }
 
-    /* static fixNum(n) {
-     return n ? n.toFixed(0) : null
-     } */
+    static hashFormName(formName) {
+        return crypto.createHash('md5').update(formName).digest('hex')
+    }
+
+    //noinspection JSUnusedGlobalSymbols
+    static fixNum(n) {
+        return n ? n.toFixed(0) : null
+    }
 }
 
 module.exports = Utils

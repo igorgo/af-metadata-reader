@@ -4,7 +4,8 @@
 const utils = require('./utils'),
     xpath = require('xpath'),
     Dom = require('xmldom').DOMParser,
-    tomlify = require('tomlify-j0.4')
+    tomlify = require('tomlify-j0.4'),
+    path = require('path')
 
 const CONTEXTS = {
         0: 'Идентификатор записи',
@@ -345,34 +346,35 @@ class Extractor {
         const query = await this.oci.execute(sql, binds)
         for (let i = 0; i < query.rows.length; i++) {
             const formRecord = query.rows[i]
-            const relPath = `${curPath}/Forms/${utils.sanitizeFilename(formRecord['FORM_CLASS'])}`
+            const relPath = path.join(curPath, 'Forms', utils.hashFormName(formRecord['FORM_CLASS']))
+            const fullPath = path.join(this.classDir,  relPath)
             const eventExt = formRecord['EVENTS_LANGUAGE'] ?
                 ['vbs', 'js', 'pas', 'pl', 'py'][formRecord['EVENTS_LANGUAGE']] : 'txt'
             if (formRecord['FORM_DATA']) {
                 await utils.saveClob1251Xml(
                     formRecord['FORM_DATA'],
-                    this.classDir + '/' + relPath,
+                    fullPath,
                     `${formRecord['FORM_LANGUAGE']}_${formDataName}`
                 )
             }
             if (formRecord['FORM_EVENTS']) {
                 await utils.saveClob1251(
                     formRecord['FORM_EVENTS'],
-                    this.classDir + '/' + relPath,
+                    fullPath,
                     `${formRecord['FORM_LANGUAGE']}_${formEventsName}.${eventExt}`
                 )
             }
             if (formRecord['FORM_DATA_EXT']) {
                 await utils.saveClob1251Xml(
                     formRecord['FORM_DATA_EXT'],
-                    this.classDir + '/' + relPath,
+                    fullPath,
                     `${formRecord['FORM_LANGUAGE']}_${condDataName}`
                 )
             }
             if (formRecord['FORM_EVENTS_EXT']) {
                 await utils.saveClob1251(
                     formRecord['FORM_EVENTS_EXT'],
-                    this.classDir + '/' + relPath,
+                    fullPath,
                     `${formRecord['FORM_LANGUAGE']}_${condEventsName}.${eventExt}`
                 )
             }
@@ -390,7 +392,7 @@ class Extractor {
                 'Приложения': formRecord['LINK_APPS'] ? {
                     'Приложение': await this._getFormApplications(formRecord['RN'])
                 } : null,
-                'Файл': formRecord['FORM_DATA'] ? `./${relPath}/${formRecord['FORM_LANGUAGE']}_${formDataName}` : null
+                'Файл': formRecord['FORM_DATA'] ? `./${relPath}/${formRecord['FORM_LANGUAGE']}_${formDataName}*.*` : null
             })
         }
         return nullEmptyArray(forms)
@@ -796,9 +798,9 @@ class Extractor {
         for (let i = 0, l = query.rows.length; i < l; i++) {
             const showMethod = query.rows[i]
             const names = await this._getResources(showMethod['RN'], 'UNIT_SHOWMETHODS', 'METHOD_NAME')
-            const relpath = `ShowMethods/${showMethod['METHOD_CODE']}`
+            const relpath = path.join('ShowMethods', showMethod['METHOD_CODE'])
             if (showMethod['SSYSIMAGE']) {
-                await this._saveIcons(this.classDir + '/' + relpath, showMethod['SSYSIMAGE'])
+                await this._saveIcons(path.join(this.classDir,relpath), showMethod['SSYSIMAGE'])
             }
             if (showMethod['SETTINGS']) {
                 await utils.saveClob1251Xml(showMethod['SETTINGS'], this.classDir + '/' + relpath, settingsFileName)
@@ -947,9 +949,9 @@ class Extractor {
             [this.classRn])
         for (let i = 0, l = query.rows.length; i < l; i++) {
             const action = query.rows[i]
-            const curPath = `Actions/${action['CODE']}`
+            const curPath = path.join('Actions',action['CODE'])
             if (action['SSYSIMAGE']) {
-                await this._saveIcons(this.classDir + '/' + curPath, action['SSYSIMAGE'])
+                await this._saveIcons(path.join(this.classDir,curPath), action['SSYSIMAGE'])
             }
             const names = await this._getResources(action['RN'], 'UNITFUNC', 'NAME')
             actions.push({
@@ -981,7 +983,7 @@ class Extractor {
                 'Переопределенный тип': OVERRIDES[action['OVERRIDE']],
                 'Безусловная доступность': !!action['UNCOND_ACCESS'],
                 'Формы': {
-                    'Форма': await this._getFormsMeta(ACTION_FORM_KIND, null, action['RN'], curPath)
+                    'Форма': await this._getFormsMeta(ACTION_FORM_KIND, null, action['RN'], 'UNITFUNC', curPath)
                 },
                 'Параметры': {
                     'Параметр': await this._getActionParamsMeta(action['RN'])
@@ -1063,7 +1065,7 @@ class Extractor {
             methods.push({
                 'Метод': method['CODE'],
                 'Формы': {
-                    'Форма': await this._getFormsMeta(ACTION_FORM_KIND, null, method['RN'], 'DMSCLACTIONSMTH', `${curPath}/Methods/${method['CODE']}`)
+                    'Форма': await this._getFormsMeta(ACTION_FORM_KIND, null, method['RN'], 'DMSCLACTIONSMTH', path.join(curPath,'Methods',method['CODE']))
                 }
             })
         }
@@ -1103,7 +1105,7 @@ class Extractor {
             const step = query.rows[i]
             if (step['SHOWPARAMS']) {
                 await utils.saveClob1251Xml(step['SHOWPARAMS'],
-                    `${this.classDir}/${curPath}/${showParamsFolderName}`,
+                    path.join(this.classDir,curPath,showParamsFolderName),
                     step['POSITION'] + '.xml')
             }
             steps.push({
@@ -1117,7 +1119,7 @@ class Extractor {
                 'Раздел': steps['SSHOWUNIT'],
                 'Метод вызова': step['SSHOWMETHOD'],
                 'Параметры метода вызова': step['SHOWPARAMS'] ?
-                    `./${curPath}/${showParamsFolderName}/${step['POSITION']}.xml` : null,
+                    `./${path.join(curPath,showParamsFolderName)}/${step['POSITION']}.xml` : null,
                 'Режим вызова': step['STPTYPE'] === 1 ? ['Обычный', 'Модальный', 'Как словарь'][step['SHOWKIND']] : null,
                 'Пользовательский отчет': step['SUSERREPORT'],
                 'Модуль пользовательского приложения': step['SUAMODULE'],
@@ -1156,10 +1158,10 @@ class Extractor {
         for (let i = 0, l = query.rows.length; i < l; i++) {
             const obj = query.rows[i]
             const names = await this._getResources(obj['RN'],'DMSCLOBJECTS', 'CAPTION')
-            const path = 'Objects'
+            const objPath = 'Objects'
             const filename = `${obj['NAME']}.${OBJECT_TYPES[obj['OBJTYPE']].extension}`
             if (obj['PLSQL_TEXT']) {
-                await utils.saveClob1251(obj['PLSQL_TEXT'],`${this.classDir}/${path}`, filename)
+                await utils.saveClob1251(obj['PLSQL_TEXT'],path.join(this.classDir,objPath), filename)
             }
             objects.push({
                 'Тип' : OBJECT_TYPES[obj['OBJTYPE']].label,
@@ -1167,7 +1169,7 @@ class Extractor {
                 'Наименование (RU)' : names.RU,
                 'Наименование (UK)' : names.UK,
                 'Вид' : ['Базовый','Клиентский','Полный клиентский'][obj['OBJKIND']],
-                'Исходный текст' : obj['PLSQL_TEXT'] ? `./${path}/${filename}` : null
+                'Исходный текст' : obj['PLSQL_TEXT'] ? `./${objPath}/${filename}` : null
             })
         }
         return nullEmptyArray(objects)
