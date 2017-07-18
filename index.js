@@ -35,9 +35,10 @@ const main = async () => {
     oci = await connectDB(params.username, params.password, params.dbname)
     exports.oci = oci
     let classList = await getClassesList()
-    for (var i = 0; i < classList.length; i++) {
-        await exportClass(classList[i])
-    }
+    const promises = classList.map(
+        cls => exportClass(cls)
+    )
+    await Promise.all(promises)
     utils.conE(R.extrSucc)
     return await closeConnection()
 }

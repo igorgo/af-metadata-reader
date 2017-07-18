@@ -48,15 +48,17 @@ class Extractor {
         utils.conE(`${this.R.procClass} ${this.classCode}${className}…`)
         this.dir = path.posix.normalize(dir)
 
-        this.classDir = path.posix.join(this.dir, this.classInfo.path.replace('/', '/SubClasses/'))
+        this.classDir = path.posix.join(this.dir, this.classInfo.path.replace(/\//g, '/SubClasses/'))
         this.classRn = this.classInfo.rn
+        let promises = await Promise.all([this._getDomainsMeta(),this._getClassMeta()])
         const tomlContent = {
             'Используемые домены': {
-                'Домен': await this._getDomainsMeta()
+                'Домен': promises[0]//await this._getDomainsMeta()
             },
-            'Класс': await this._getClassMeta()
+            'Класс': promises[1] // await this._getClassMeta()
         }
         await utils.saveTextFile(tomlify(tomlContent, null, 4), this.classDir, 'Metadata.toml')
+        await utils.saveTextFile(JSON.stringify(tomlContent), this.classDir, 'Metadata.toml')
         return {
             classRn: this.classRn,
             classCode: this.classCode,
@@ -259,10 +261,21 @@ class Extractor {
                 and CL.DOCFORM = UA.RN(+)`,
             [this.classRn])
         let classRow = classQuery.rows[0]
-        let names = await this._getResources(classRow['RN'], 'UNITLIST', 'UNITNAME')
         if (classRow['SSYSIMAGE']) {
             await this._saveIcons(this.classDir, classRow['SSYSIMAGE'])
         }
+        const promises = await Promise.all([
+            this._getResources(classRow['RN'], 'UNITLIST', 'UNITNAME'), // 0
+            this._getTableMeta(classRow['TABLE_NAME']), // 1
+            this._getAttributesMeta(), // 2
+            this._getConstraintsMeta(), // 3
+            this._getLinksMeta(), // 4
+            this._getViewsMeta(), // 5
+            this._getShowMethodsMeta(), //6
+            this._getMethodsMeta(), // 7
+            this._getActionsMeta() // 8
+        ])
+        let names = promises[0]
         return {
             'Код': classRow['UNITCODE'],
             'Наименование (RU)': names.RU,
@@ -280,27 +293,27 @@ class Extractor {
             'Процедура считывания значений атрибутов': classRow['GET_PROCEDURE'],
             'Форма раздела': classRow['SDOCFORM'],
             'Пиктограмма': classRow['SSYSIMAGE'],
-            'Таблица': classRow['TABLE_NAME'] ? await this._getTableMeta(classRow['TABLE_NAME']) : null,
+            'Таблица': promises[1],
             'Атрибуты': {
-                'Атрибут': await this._getAttributesMeta()
+                'Атрибут': promises[2]
             },
             'Ограничения': {
-                'Ограничение': await this._getConstraintsMeta()
+                'Ограничение': promises[3]
             },
             'Связи': {
-                'Связь': await this._getLinksMeta()
+                'Связь': promises[4]
             },
             'Представления': {
-                'Представление': await this._getViewsMeta()
+                'Представление': promises[5]
             },
             'Методы вызова': {
-                'Метод вызова': await this._getShowMethodsMeta()
+                'Метод вызова': promises[6]
             },
             'Методы': {
-                'Метод': await this._getMethodsMeta()
+                'Метод': promises[7]
             },
             'Действия': {
-                'Действие': await this._getActionsMeta()
+                'Действие': promises[8]
             },
             'Объекты': {
                 'Объект': await this._getObjectsMeta()
@@ -399,19 +412,22 @@ class Extractor {
     }
 
     async _getTableMeta(tableName) {
-        utils.conU(this.R.tabDef)
-        const query = await this.oci.execute(
-            'select TL.* from TABLELIST TL where TL.TABLENAME = :TABLENAME',
-            [tableName])
-        const res = query.rows[0]
-        const names = await this._getResources(res['RN'], 'TABLELIST', 'TABLENOTE')
-        return {
-            'Имя': res['TABLENAME'],
-            'Наименование (RU)': names.RU,
-            'Наименование (UK)': names.UK,
-            'Тип информации': ['Постоянная', 'Временная'][res['TEMPFLAG']],
-            'Технология производства': ['Стандарт', 'Конструктор'][res['TECHNOLOGY']]
+        if (tableName) {
+            utils.conU(this.R.tabDef)
+            const query = await this.oci.execute(
+                'select TL.* from TABLELIST TL where TL.TABLENAME = :TABLENAME',
+                [tableName])
+            const res = query.rows[0]
+            const names = await this._getResources(res['RN'], 'TABLELIST', 'TABLENOTE')
+            return {
+                'Имя': res['TABLENAME'],
+                'Наименование (RU)': names.RU,
+                'Наименование (UK)': names.UK,
+                'Тип информации': ['Постоянная', 'Временная'][res['TEMPFLAG']],
+                'Технология производства': ['Стандарт', 'Конструктор'][res['TECHNOLOGY']]
+            }
         }
+        else return null
     }
 
     async _getAttributesMeta() {
@@ -436,7 +452,7 @@ class Extractor {
                 'Имя': attr['COLUMN_NAME'],
                 'Наименование (RU)': names.RU,
                 'Наименование (UK)': names.UK,
-                'Позиция': attr['POSITION'],
+                // 'Позиция': attr['POSITION'],
                 'Тип': ['Физический', 'Логический', 'Получен по связи'][attr['KIND']],
                 'Домен': attr['SDOMAIN'],
                 'Связь': attr['SREF_LINK'],
@@ -502,7 +518,7 @@ class Extractor {
                      `, [constrRn])
         return nullEmptyArray(query.rows.map((attr) => {
             return {
-                'Позиция': attr['POSITION'],
+                // 'Позиция': attr['POSITION'],
                 'Атрибут': attr['COLUMN_NAME']
             }
         }))
@@ -586,7 +602,7 @@ class Extractor {
         for (let i = 0, l = query.rows.length; i < l; i++) {
             const attr = query.rows[i]
             attrs.push({
-                'Позиция': attr['POSITION'],
+                // 'Позиция': attr['POSITION'],
                 'Атрибут класса-приемника': attr['SDESTINATION'],
                 'Атрибут класса-источника': attr['SSOURCE']
             })
@@ -751,7 +767,7 @@ class Extractor {
                 'Имя': param['NAME'],
                 'Наименование (RU)': names.RU,
                 'Наименование (UK)': names.UK,
-                'Позиция': param['POSITION'],
+                // 'Позиция': param['POSITION'],
                 'Тип': ['Входной/выходной (in/out)', 'Входной (in)', 'Выходной (out)'][param['INOUT']],
                 'Домен': param['SDOMAIN'],
                 'Тип привязки': [
@@ -945,7 +961,7 @@ class Extractor {
                     DMSCLMETHODS M
               where UF.PRN = :WORKIN_CLASS
                 and UF.METHOD = M.RN(+)
-              order by UF.NUMB`,
+              order by UF.CODE`,
             [this.classRn])
         for (let i = 0, l = query.rows.length; i < l; i++) {
             const action = query.rows[i]
@@ -1028,7 +1044,7 @@ class Extractor {
             const param = query.rows[i]
             params.push({
                 'Имя': param['NAME'],
-                'Позиция': param['POSITION'],
+                // 'Позиция': param['POSITION'],
                 'Домен': param['SDOMAIN'],
                 'Тип привязки': [
                     'Нет',
