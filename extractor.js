@@ -50,15 +50,19 @@ class Extractor {
 
         this.classDir = path.posix.join(this.dir, this.classInfo.path.replace(/\//g, '/SubClasses/'))
         this.classRn = this.classInfo.rn
-        let promises = await Promise.all([this._getDomainsMeta(),this._getClassMeta()])
+        let promises = await Promise.all([this._getDomainsMeta(), this._getClassMeta()])
         const tomlContent = {
             'Используемые домены': {
-                'Домен': promises[0]//await this._getDomainsMeta()
+                'Домен': promises[0].toml//await this._getDomainsMeta()
             },
-            'Класс': promises[1] // await this._getClassMeta()
+            'Класс': promises[1].toml // await this._getClassMeta()
+        }
+        const jsonContent = {
+            'usingDomains': promises[0].json,
+            'class': promises[1].json
         }
         await utils.saveTextFile(tomlify(tomlContent, null, 4), this.classDir, 'Metadata.toml')
-        await utils.saveTextFile(JSON.stringify(tomlContent), this.classDir, 'Metadata.toml')
+        await utils.saveTextFile(JSON.stringify(jsonContent, null, 4), this.classDir, 'Metadata.json')
         return {
             classRn: this.classRn,
             classCode: this.classCode,
@@ -132,7 +136,8 @@ class Extractor {
         let domainsMeta = await this._getMetadataDomainList()
         let domainsCond = await this._getConditionDomainList()
         let domains = [...new Set(domainsMeta.concat(domainsCond))].sort()
-        let domainsData = []
+        let domainsDataToml = []
+        let domainsDataJson = []
         for (let i = 0; i < domains.length; i++) {
             let r = await this.oci.execute(`
                  select D.RN,
@@ -154,7 +159,8 @@ class Extractor {
             `, [domains[i]])
             let domain = r.rows[0]
             let name = await this._getResources(domain['RN'], 'DMSDOMAINS', 'NAME')
-            let objDomain = {
+            const enums = await this._getDomainEnums(domain['RN'])
+            let tomlDomain = {
                 'Мнемокод': domain['CODE'],
                 'Наименование (RU)': name.RU,
                 'Наименование (UK)': name.UK,
@@ -167,16 +173,34 @@ class Extractor {
                 'Выравнивать по длине': !!domain['PADDING'],
                 'Имеет перечисляемые значения': !!domain['ENUMERATED'],
                 'Перечисляемые значения': domain['ENUMERATED'] ?
-                    {'Перечисляемое значение': await this._getDomainEnums(domain['RN'])}
+                    {'Перечисляемое значение': enums.toml}
                     : null
             }
-            domainsData.push(objDomain)
+            let jsonDomain = {
+                'CODE': domain['CODE'],
+                'NAME': name,
+                'DATA_TYPE': domain['DATATYPE_TEXT'],
+                'DATA_SUBTYPE': domain['DATATYPE_SUBTEXT'],
+                'DATA_LENGTH': domain['DATA_LENGTH'],
+                'DATA_PRECISION': domain['DATA_PRECISION'],
+                'DATA_SCALE': domain['DATA_SCALE'],
+                'DEFAULT_VAL': utils.coalesce(domain['DEFAULT_STR'], domain['DEFAULT_NUM'], domain['DEFAULT_DATE']),
+                'PADDING': !!domain['PADDING'],
+                'ENUMERATED': !!domain['ENUMERATED'],
+                'ENUMS': enums.json
+            }
+            domainsDataToml.push(tomlDomain)
+            domainsDataJson.push(jsonDomain)
         }
-        return nullEmptyArray(domainsData)
+        return {
+            'toml': nullEmptyArray(domainsDataToml),
+            'json': domainsDataJson
+        }
     }
 
     async _getDomainEnums(domainRn) {
-        let enums = []
+        let enumsToml = []
+        let enumsJson = []
         let query = await this.oci.execute(`
                     select RN,
                            POSITION,
@@ -190,14 +214,23 @@ class Extractor {
         for (let i = 0; i < query.rows.length; i++) {
             let enumRow = query.rows[i]
             let enumName = await this._getResources(enumRow['RN'], 'DMSENUMVALUES', 'NAME')
-            enums.push({
+            enumsToml.push({
                 'Позиция': enumRow['POSITION'].trim(),
                 'Значение': utils.coalesce(enumRow['VALUE_STR'], enumRow['VALUE_NUM'], enumRow['VALUE_DATE']),
                 'Наименование (RU)': enumName.RU,
-                'Наименование (UK)': enumName.UK,
+                'Наименование (UK)': enumName.UK
+            })
+            enumsJson.push({
+                'POSITION': enumRow['POSITION'].trim(),
+                'VALUE': utils.coalesce(enumRow['VALUE_STR'], enumRow['VALUE_NUM'], enumRow['VALUE_DATE']),
+                'NAME': enumName
             })
         }
-        return nullEmptyArray(enums)
+        return {
+            'toml': nullEmptyArray(enumsToml),
+            'json': enumsJson
+        }
+
     }
 
     async _getMetadataDomainList() {
@@ -266,17 +299,18 @@ class Extractor {
         }
         const promises = await Promise.all([
             this._getResources(classRow['RN'], 'UNITLIST', 'UNITNAME'), // 0
-            this._getTableMeta(classRow['TABLE_NAME']), // 1
-            this._getAttributesMeta(), // 2
-            this._getConstraintsMeta(), // 3
-            this._getLinksMeta(), // 4
-            this._getViewsMeta(), // 5
-            this._getShowMethodsMeta(), //6
-            this._getMethodsMeta(), // 7
-            this._getActionsMeta() // 8
+            this._getTableMeta(classRow['TABLE_NAME']),                 // 1
+            this._getAttributesMeta(),                                  // 2
+            this._getConstraintsMeta(),                                 // 3
+            this._getLinksMeta(),                                       // 4
+            this._getViewsMeta(),                                       // 5
+            this._getShowMethodsMeta(),                                 // 6
+            this._getMethodsMeta(),                                     // 7
+            this._getActionsMeta(),                                     // 8
+            this._getObjectsMeta()                                      // 9
         ])
         let names = promises[0]
-        return {
+        const toml = {
             'Код': classRow['UNITCODE'],
             'Наименование (RU)': names.RU,
             'Наименование (UK)': names.UK,
@@ -293,31 +327,61 @@ class Extractor {
             'Процедура считывания значений атрибутов': classRow['GET_PROCEDURE'],
             'Форма раздела': classRow['SDOCFORM'],
             'Пиктограмма': classRow['SSYSIMAGE'],
-            'Таблица': promises[1],
+            'Таблица': promises[1].toml,
             'Атрибуты': {
-                'Атрибут': promises[2]
+                'Атрибут': promises[2].toml
             },
             'Ограничения': {
-                'Ограничение': promises[3]
+                'Ограничение': promises[3].toml
             },
             'Связи': {
-                'Связь': promises[4]
+                'Связь': promises[4].toml
             },
             'Представления': {
-                'Представление': promises[5]
+                'Представление': promises[5].toml
             },
             'Методы вызова': {
-                'Метод вызова': promises[6]
+                'Метод вызова': promises[6].toml
             },
             'Методы': {
-                'Метод': promises[7]
+                'Метод': promises[7].toml
             },
             'Действия': {
-                'Действие': promises[8]
+                'Действие': promises[8].toml
             },
             'Объекты': {
-                'Объект': await this._getObjectsMeta()
+                'Объект': promises[9].toml
             }
+        }
+        const json = {
+            'CODE': classRow['UNITCODE'],
+            'NAME': names,
+            'ABSTRACT': !!classRow['ABSTRACT'],
+            'IS_BUFFER': !!classRow['SIGN_BUFFER'],
+            'IS_DRIVEN': !!classRow['SIGN_DRIVEN'],
+            'HOST_CLASS': classRow['HOSTCODE'],
+            'SIGN_SHARE': ['Нет деления', 'По версиям', 'По организациям'][classRow['SIGN_SHARE']],
+            'SIGN_JURPERS': !!classRow['SIGN_JURPERS'],
+            'HIERARCHICAL': !!classRow['HIERARCHICAL'],
+            'SIGN_CATALOGS': !!classRow['SIGN_HIER'],
+            'USE_DOCPROPS': !!classRow['USE_DOCPROPS'],
+            'USE_FILELINKS': !!classRow['USE_FILELINKS'],
+            'GET_ATTRIBS_PROCEDURE': classRow['GET_PROCEDURE'],
+            'UA_DOCFORM': classRow['SDOCFORM'],
+            'ICON': classRow['SSYSIMAGE'],
+            'TABLE': promises[1].json,
+            'ATTRIBUTES': promises[2].json,
+            'CONSTRAINTS': promises[3].json,
+            'LINKS': promises[4].json,
+            'VIEWS': promises[5].json,
+            'SHOW_METHODS': promises[6].json,
+            'METHODS': promises[7].json,
+            'ACTIONS': promises[8].json,
+            'OBJECTS': promises[9].json
+        }
+        return {
+            'toml': toml,
+            'json': json
         }
     }
 
@@ -328,7 +392,8 @@ class Extractor {
         const condDataName = 'ConditionForm.xml'
         const condEventsName = 'ConditionEvents'
 
-        let forms = []
+        let formsToml = []
+        let formsJson = []
         const sql = `
             select T.RN,
                    T.FORM_CLASS,
@@ -391,7 +456,8 @@ class Extractor {
                     `${formRecord['FORM_LANGUAGE']}_${condEventsName}.${eventExt}`
                 )
             }
-            forms.push({
+            const apps = await this._getFormApplications(formRecord['RN'])
+            formsToml.push({
                 'Имя': formRecord['FORM_CLASS'],
                 'Наименование': formRecord['FORM_NAME'],
                 'Тип скрипта': formRecord['EVENTS_LANGUAGE'] ?
@@ -403,12 +469,29 @@ class Extractor {
                 'Учитывать связи с приложениями': !!formRecord['LINK_APPS'],
                 'Учитывать назначение пользователям, ролям': !!formRecord['LINK_PRIVS'],
                 'Приложения': formRecord['LINK_APPS'] ? {
-                    'Приложение': await this._getFormApplications(formRecord['RN'])
+                    'Приложение': apps.toml
                 } : null,
                 'Файл': formRecord['FORM_DATA'] ? path.posix.join('.', relPath, `${formRecord['FORM_LANGUAGE']}_${formDataName}`) : null
             })
+            formsJson.push({
+                'FORM_CLASS': formRecord['FORM_CLASS'],
+                'FORM_NAME': formRecord['FORM_NAME'],
+                'EVENTS_LANGUAGE': formRecord['EVENTS_LANGUAGE'] ?
+                    ['VBScript', 'JScript', 'DelphiScript', 'PerlScript', 'PythonScript'][formRecord['EVENTS_LANGUAGE']]
+                    : null,
+                'FORM_UAMODULE': formRecord['SFORM_UAMODULE'],
+                'FORM_LANGUAGE': formRecord['FORM_LANGUAGE'],
+                'FORM_ACTIVE': !!formRecord['FORM_ACTIVE'],
+                'LINK_APPS': !!formRecord['LINK_APPS'],
+                'LINK_PRIVS': !!formRecord['LINK_PRIVS'],
+                'LINKED_APPS': apps.json,
+                'FILE': formRecord['FORM_DATA'] ? path.posix.join('.', relPath, `${formRecord['FORM_LANGUAGE']}_${formDataName}`) : null
+            })
         }
-        return nullEmptyArray(forms)
+        return {
+            'toml': nullEmptyArray(formsToml),
+            'json': formsJson
+        }
     }
 
     async _getTableMeta(tableName) {
@@ -419,15 +502,28 @@ class Extractor {
                 [tableName])
             const res = query.rows[0]
             const names = await this._getResources(res['RN'], 'TABLELIST', 'TABLENOTE')
-            return {
+            const cToml = {
                 'Имя': res['TABLENAME'],
                 'Наименование (RU)': names.RU,
                 'Наименование (UK)': names.UK,
                 'Тип информации': ['Постоянная', 'Временная'][res['TEMPFLAG']],
                 'Технология производства': ['Стандарт', 'Конструктор'][res['TECHNOLOGY']]
             }
+            const cJson = {
+                'TABLENAME': res['TABLENAME'],
+                'COMMENT': names,
+                'TEMPFLAG': !!res['TEMPFLAG'],
+                'TECHNOLOGY': ['Стандарт', 'Конструктор'][res['TECHNOLOGY']]
+            }
+            return {
+                'toml': cToml,
+                'json': cJson
+            }
         }
-        else return null
+        else return {
+            'toml': null,
+            'json': null
+        }
     }
 
     async _getAttributesMeta() {
@@ -444,22 +540,35 @@ class Extractor {
                    and CA.REF_ATTRIBUTE = CAR.RN(+)
                  order by CA.COLUMN_NAME`,
             [this.classRn])
-        let attrs = []
+        let attrsToml = []
+        let attrsJson = []
         for (let i = 0, len = attrsQuery.rows.length; i < len; i++) {
             const attr = attrsQuery.rows[i]
             const names = await this._getResources(attr['RN'], 'DMSCLATTRS', 'CAPTION')
-            attrs.push({
+            attrsToml.push({
                 'Имя': attr['COLUMN_NAME'],
                 'Наименование (RU)': names.RU,
                 'Наименование (UK)': names.UK,
-                // 'Позиция': attr['POSITION'],
+                'Позиция': attr['POSITION'],
                 'Тип': ['Физический', 'Логический', 'Получен по связи'][attr['KIND']],
                 'Домен': attr['SDOMAIN'],
                 'Связь': attr['SREF_LINK'],
                 'Атрибут связи': attr['SREF_ATTRIBUTE']
             })
+            attrsJson.push({
+                'COLUMN_NAME': attr['COLUMN_NAME'],
+                'CAPTION': names,
+                'POSITION': attr['POSITION'],
+                'KIND': ['Физический', 'Логический', 'Получен по связи'][attr['KIND']],
+                'DOMAIN': attr['SDOMAIN'],
+                'REF_LINK': attr['SREF_LINK'],
+                'REF_ATTRIBUTE': attr['SREF_ATTRIBUTE']
+            })
         }
-        return nullEmptyArray(attrs)
+        return {
+            'toml': nullEmptyArray(attrsToml),
+            'json': attrsJson
+        }
     }
 
     async _getConstraintsMeta() {
@@ -481,12 +590,14 @@ class Extractor {
                    and T.MESSAGE = MES.RN(+)
                  order by T.CONSTRAINT_TYPE, T.CONSTRAINT_NAME
             `, [this.classRn])
-        let constrs = []
+        let constrsToml = []
+        let constrsJson = []
         for (let i = 0, len = query.rows.length; i < len; i++) {
             const constr = query.rows[i]
             const names = await this._getResources(constr['RN'], 'DMSCLCONSTRS', 'CONSTRAINT_NOTE')
             const messages = await this._getResources(constr['MESSAGE'], 'DMSMESSAGES', 'TEXT')
-            constrs.push({
+            const attrs = await this._getConstraintAttributesMeta(constr['RN'])
+            constrsToml.push({
                 'Имя': constr['CONSTRAINT_NAME'],
                 'Наименование (RU)': names.RU,
                 'Наименование (UK)': names.UK,
@@ -501,11 +612,28 @@ class Extractor {
                     'Текст (UK)': messages.UK
                 },
                 'Атрибуты': {
-                    'Атрибут': await this._getConstraintAttributesMeta(constr['RN'])
+                    'Атрибут': attrs.toml
                 }
             })
+            constrsJson.push({
+                'CONSTRAINT_NAME': constr['CONSTRAINT_NAME'],
+                'COMMENT': names,
+                'CONSTRAINT_TYPE': CONSTRAINT_TYPES[constr['CONSTRAINT_TYPE']],
+                'USE_TO_JOIN': !!constr['LINKS_SIGN'],
+                'CONSTRAINT_TEXT': constr['CONSTRAINT_TEXT'],
+                'MESSAGE': {
+                    'CODE': constr['MES_CODE'],
+                    'TECHNOLOGY': ['Стандарт', 'Конструктор'][constr['MES_TECHNOLOGY']],
+                    'KIND': ['Сообщение ограничения', 'Сообщение исключения'][constr['MES_KIND']],
+                    'TEXT': messages
+                },
+                'ATTRIBUTES': attrs.json
+            })
         }
-        return nullEmptyArray(constrs)
+        return {
+            'toml': nullEmptyArray(constrsToml),
+            'json': constrsJson
+        }
     }
 
     async _getConstraintAttributesMeta(constrRn) {
@@ -516,16 +644,27 @@ class Extractor {
                            and T.ATTRIBUTE = TR1.RN
                          order by TR1.COLUMN_NAME
                      `, [constrRn])
-        return nullEmptyArray(query.rows.map((attr) => {
+        const atToml = query.rows.map((attr) => {
             return {
-                // 'Позиция': attr['POSITION'],
+                'Позиция': attr['POSITION'],
                 'Атрибут': attr['COLUMN_NAME']
             }
-        }))
+        })
+        const atJson = query.rows.map((attr) => {
+            return {
+                'POSITION': attr['POSITION'],
+                'COLUMN_NAME': attr['COLUMN_NAME']
+            }
+        })
+        return {
+            'toml': nullEmptyArray(atToml),
+            'json': atJson
+        }
     }
 
     async _getLinksMeta() {
-        let links = []
+        let linksToml = []
+        let linksJson = []
         utils.conU(this.R.linkMeta)
         const query = await this.oci.execute(`
                 select T.RN,
@@ -563,7 +702,8 @@ class Extractor {
         for (let i = 0, l = query.rows.length; i < l; i++) {
             const link = query.rows[i]
             const names = await this._getResources(link['RN'], 'DMSCLLINKS', 'CONSTRAINT_NOTE')
-            links.push({
+            const attrs = await this._getLinkAttributesMeta(link['RN'])
+            linksToml.push({
                 'Код': link['CONSTRAINT_NAME'],
                 'Наименование (RU)': names.RU,
                 'Наименование (UK)': names.UK,
@@ -578,15 +718,34 @@ class Extractor {
                 'Атрибут уровня иерархии': link['SLEVEL_ATTR'],
                 'Атрибут полного имени иерархии': link['SPATH_ATTR'],
                 'Атрибуты': {
-                    'Атрибут': await this._getLinkAttributesMeta(link['RN'])
+                    'Атрибут': attrs.toml
                 }
             })
+            linksJson.push({
+                'CONSTRAINT_NAME': link['CONSTRAINT_NAME'],
+                'CONSTRAINT_NOTE': names,
+                'UNIT_SOURCE': link['UNITCODE'],
+                'STEREOTYPE': link['SSTEREOTYPE'],
+                'FOREIGN_KEY': !!link['FOREIGN_KEY'],
+                'SRC_CONSTRAINT': link['SSRC_CONSTRAINT'],
+                'RULE': ['Нет правил', 'Каскадное удаление'][link['RULE']],
+                'MASTER_LINK': link['SMASTER_LINK'],
+                'MESSAGE_SRC': link['SMESSAGE1'],
+                'MESSAGE_DEST': link['SMESSAGE2'],
+                'HIER_LEVEL_ATTR': link['SLEVEL_ATTR'],
+                'HIER_PATH_ATTR': link['SPATH_ATTR'],
+                'ATTRIBUTES': attrs.json
+            })
         }
-        return nullEmptyArray(links)
+        return {
+            'toml': nullEmptyArray(linksToml),
+            'json': linksJson
+        }
     }
 
     async _getLinkAttributesMeta(linkRn) {
-        let attrs = []
+        let attrsToml = []
+        let attrsJson = []
         const query = await this.oci.execute(`
                         select T.POSITION,
                                TR1.COLUMN_NAME as SSOURCE,
@@ -601,17 +760,26 @@ class Extractor {
             [linkRn])
         for (let i = 0, l = query.rows.length; i < l; i++) {
             const attr = query.rows[i]
-            attrs.push({
-                // 'Позиция': attr['POSITION'],
+            attrsToml.push({
+                'Позиция': attr['POSITION'],
                 'Атрибут класса-приемника': attr['SDESTINATION'],
                 'Атрибут класса-источника': attr['SSOURCE']
             })
+            attrsJson.push({
+                'POSITION': attr['POSITION'],
+                'DESTINATION': attr['SDESTINATION'],
+                'SOURCE': attr['SSOURCE']
+            })
         }
-        return nullEmptyArray(attrs)
+        return {
+            'toml': nullEmptyArray(attrsToml),
+            'json': attrsJson
+        }
     }
 
     async _getViewsMeta() {
-        let views = []
+        let viewsToml = []
+        let viewsJson = []
         utils.conU(this.R.viewMeta)
         const query = await this.oci.execute(`
                 select T.RN,
@@ -626,7 +794,9 @@ class Extractor {
         for (let i = 0, l = query.rows.length; i < l; i++) {
             const view = query.rows[i]
             const names = await this._getResources(view['RN'], 'DMSCLVIEWS', 'VIEW_NOTE')
-            views.push({
+            const params = await this._getViewParamsMeta(view['RN'])
+            const attrs = await this._getViewAttributesMeta(view['RN'])
+            viewsToml.push({
                 'Имя': view['VIEW_NAME'],
                 'Наименование (RU)': names.RU,
                 'Наименование (UK)': names.UK,
@@ -634,18 +804,31 @@ class Extractor {
                 'Вызывается с клиента': !!view['ACCESSIBILITY'],
                 'Текст запроса': view['QUERY_SQL'],
                 'Параметры': {
-                    'Параметр': view['CUSTOM_QUERY'] ? await this._getViewParamsMeta(view['RN']) : null
+                    'Параметр': view['CUSTOM_QUERY'] ? params.toml : null
                 },
                 'Атрибуты': {
-                    'Атрибут': await this._getViewAttributesMeta(view['RN'])
+                    'Атрибут': attrs.toml
                 }
             })
+            viewsJson.push({
+                'VIEW_NAME': view['VIEW_NAME'],
+                'VIEW_NOTE': names,
+                'CUSTOM_QUERY': !!view['CUSTOM_QUERY'],
+                'PUBLIC': !!view['ACCESSIBILITY'],
+                'QUERY_SQL': view['QUERY_SQL'],
+                'QUERY_PARAMS': params.json,
+                'ATTRIBUTES': attrs.json
+            })
         }
-        return nullEmptyArray(views)
+        return {
+            'toml': nullEmptyArray(viewsToml),
+            'json': viewsJson
+        }
     }
 
     async _getViewParamsMeta(viewRn) {
-        let params = []
+        let paramsToml = []
+        let paramsJson = []
         const paramsQuery = await this.oci.execute(`
                         select T.PARAM_NAME,
                                D.CODE as SDOMAIN
@@ -657,16 +840,24 @@ class Extractor {
             [viewRn])
         for (let i = 0, l = paramsQuery.rows.length; i < l; i++) {
             const param = paramsQuery.rows[i]
-            params.push({
+            paramsToml.push({
                 'Наименование параметра': param['PARAM_NAME'],
                 'Домен': param['SDOMAIN']
             })
+            paramsJson.push({
+                'PARAM_NAME': param['PARAM_NAME'],
+                'DOMAIN': param['SDOMAIN']
+            })
         }
-        return nullEmptyArray(params)
+        return {
+            'toml': nullEmptyArray(paramsToml),
+            'jsom': paramsJson
+        }
     }
 
     async _getViewAttributesMeta(viewRn) {
-        let attrs = []
+        let attrsToml = []
+        let attrsJson = []
         const query = await this.oci.execute(`
                         select A.POSITION,
                                A.COLUMN_NAME as SATTR,
@@ -679,16 +870,24 @@ class Extractor {
             [viewRn])
         for (let i = 0, l = query.rows.length; i < l; i++) {
             const attr = query.rows[i]
-            attrs.push({
+            attrsToml.push({
                 'Атрибут класса': attr['SATTR'],
                 'Имя колонки': attr['COLUMN_NAME']
             })
+            attrsJson.push({
+                'CLASS_ATTRIBUTE': attr['SATTR'],
+                'COLUMN_NAME': attr['COLUMN_NAME']
+            })
         }
-        return nullEmptyArray(attrs)
+        return {
+            'toml': nullEmptyArray(attrsToml),
+            'json': attrsJson
+        }
     }
 
     async _getMethodsMeta() {
-        let methods = []
+        let methodsToml = []
+        let methodsJson = []
         utils.conU(this.R.metMeta)
         const q = await this.oci.execute(`
                 select T.RN,
@@ -714,7 +913,8 @@ class Extractor {
                 this._getResources(method['RN'], 'DMSCLMETHODS', 'NOTE')
             const comments = await
                 this._getResources(method['RN'], 'DMSCLMETHODS', 'COMMENT')
-            methods.push({
+            const params = await this._getMethodParamsMeta(method['RN'])
+            methodsToml.push({
                 'Мнемокод': method['CODE'],
                 'Тип метода': ['Процедура', 'Функция'][method['METHOD_TYPE']],
                 'Доступность': ['Базовый', 'Клиентский'][method['ACCESSIBILITY']],
@@ -726,15 +926,30 @@ class Extractor {
                 'Примечание (UK)': comments.UK,
                 'Домен результата функции': method['SRESULT_DOMAIN'],
                 'Параметры': {
-                    'Параметр': await this._getMethodParamsMeta(method['RN'])
+                    'Параметр': params.toml
                 }
             })
+            methodsJson.push({
+                'CODE': method['CODE'],
+                'METHOD_TYPE': ['Процедура', 'Функция'][method['METHOD_TYPE']],
+                'ACCESSIBILITY': ['Базовый', 'Клиентский'][method['ACCESSIBILITY']],
+                'PACKAGE': method['PACKAGE'],
+                'PROC_NAME': method['NAME'],
+                'NAME': names,
+                'COMMENT': comments,
+                'RESULT_DOMAIN': method['SRESULT_DOMAIN'],
+                'PARAMS': params.json
+            })
         }
-        return nullEmptyArray(methods)
+        return {
+            'toml': nullEmptyArray(methodsToml),
+            'json': methodsJson
+        }
     }
 
     async _getMethodParamsMeta(methodRn) {
-        let params = []
+        let paramsToml = []
+        let paramsJson = []
         const query = await this.oci.execute(`
                     select T.RN,
                            T.POSITION,
@@ -763,11 +978,11 @@ class Extractor {
         for (let i = 0, l = query.rows.length; i < l; i++) {
             const param = query.rows[i]
             const names = await this._getResources(param['RN'], 'DMSCLMETPARMS', 'NOTE')
-            params.push({
+            paramsToml.push({
                 'Имя': param['NAME'],
                 'Наименование (RU)': names.RU,
                 'Наименование (UK)': names.UK,
-                // 'Позиция': param['POSITION'],
+                'Позиция': param['POSITION'],
                 'Тип': ['Входной/выходной (in/out)', 'Входной (in)', 'Выходной (out)'][param['INOUT']],
                 'Домен': param['SDOMAIN'],
                 'Тип привязки': [
@@ -786,13 +1001,39 @@ class Extractor {
                 'Параметр действия': param['ACTION_PARAM'],
                 'Обязательный для заполнения': !!param['MANDATORY']
             })
+            paramsJson.push({
+                'NAME': param['NAME'],
+                'CAPTION': names,
+                'POSITION': param['POSITION'],
+                'INOUT': ['Входной/выходной (in/out)', 'Входной (in)', 'Выходной (out)'][param['INOUT']],
+                'DOMAIN': param['SDOMAIN'],
+                'LINK_TYPE': [
+                    'Нет',
+                    'Атрибут',
+                    'Контекст',
+                    'Значение',
+                    'Результат функции',
+                    'Параметр действия'
+                ][param['LINK_TYPE']],
+                'ATTRIBUTE': param['COLUMN_NAME'],
+                'VALUE': (param['DEF_NUMBER'] || param['DEF_STRING'] || param['DEF_DATE']) ?
+                    utils.coalesce(param['DEF_NUMBER'], param['DEF_STRING'], param['DEF_DATE']) : null,
+                'CONTEXT': param['CONTEXT'] !== null ? CONTEXTS[param['CONTEXT']] : null,
+                'LINKED_FUNCTION': param['LINKED_FUNCTION'],
+                'ACTION_PARAM': param['ACTION_PARAM'],
+                'MANDATORY': !!param['MANDATORY']
+            })
         }
-        return nullEmptyArray(params)
+        return {
+            'toml': nullEmptyArray(paramsToml),
+            'json': paramsJson
+        }
     }
 
     async _getShowMethodsMeta() {
         const settingsFileName = 'Settings.xml'
-        let showMethods = []
+        let showMethodsToml = []
+        let showMethodsJson = []
         utils.conU(this.R.shMetMeta)
         const query = await this.oci.execute(`
                   select SM.RN,
@@ -821,7 +1062,9 @@ class Extractor {
             if (showMethod['SETTINGS']) {
                 await utils.saveClob1251Xml(showMethod['SETTINGS'], path.posix.join(this.classDir, relpath), settingsFileName)
             }
-            showMethods.push({
+            const params = await this._getShowMethodParamsMeta(showMethod['RN'])
+            const forms = await this._getFormsMeta(SHOWMETHOD_FORM_KIND, showMethod['RN'], null, null, relpath)
+            showMethodsToml.push({
                 'Мнемокод': showMethod['METHOD_CODE'],
                 'Наименование (RU)': names.RU,
                 'Наименование (UK)': names.UK,
@@ -833,18 +1076,35 @@ class Extractor {
                 'Использовать для отображения в качестве словаря': !!showMethod['USEFORDICT'],
                 'Настройка': showMethod['SETTINGS'] ? path.posix.join('.', relpath, settingsFileName) : null,
                 'Параметры': {
-                    'Параметр': await this._getShowMethodParamsMeta(showMethod['RN'])
+                    'Параметр': params.toml
                 },
                 'Формы': {
-                    'Форма': await this._getFormsMeta(SHOWMETHOD_FORM_KIND, showMethod['RN'], null, null, relpath)
+                    'Форма': forms.toml
                 }
             })
+            showMethodsJson.push({
+                'METHOD_CODE': showMethod['METHOD_CODE'],
+                'METHOD_NAME': names,
+                'TECHNOLOGY': ['Стандарт', 'Конструктор'][showMethod['TECHNOLOGY']],
+                'ICON': showMethod['SSYSIMAGE'],
+                'CONDITIONS_TYPE': ['Клиент', 'Сервер'][showMethod['COND_TYPE']],
+                'USE_FOR_VIEW': !!showMethod['USEFORVIEW'],
+                'USE_FOR_LINKS': !!showMethod['USEFORLINKS'],
+                'USE_FOR_DICT': !!showMethod['USEFORDICT'],
+                'SETTINGS': showMethod['SETTINGS'] ? path.posix.join('.', relpath, settingsFileName) : null,
+                'PARAMS': params.json,
+                'FORMS': forms.json
+            })
         }
-        return nullEmptyArray(showMethods)
+        return {
+            'toml': nullEmptyArray(showMethodsToml),
+            'json': showMethodsJson
+        }
     }
 
     async _getShowMethodParamsMeta(showMethodRn) {
-        let params = []
+        let paramsToml = []
+        let paramsJson = []
         const query = await this.oci.execute(`
                     select MP.RN,
                            CA.COLUMN_NAME,
@@ -864,7 +1124,7 @@ class Extractor {
         for (let i = 0; i < query.rows.length; i++) {
             const param = query.rows[i]
             const names = await this._getResources(param['RN'], 'UNITPARAMS', 'PARAMNAME')
-            params.push({
+            paramsToml.push({
                 'Атрибут класса': param['COLUMN_NAME'],
                 'Наименование (RU)': names.RU,
                 'Наименование (UK)': names.UK,
@@ -874,12 +1134,25 @@ class Extractor {
                 'Прямой запрос': param['DIRECT_SQL'],
                 'Обратный запрос': param['BACK_SQL']
             })
+            paramsJson.push({
+                'COLUMN_NAME': param['COLUMN_NAME'],
+                'NAME': names,
+                'IN_CODE': param['IN_CODE'],
+                'OUT_CODE': param['OUT_CODE'],
+                'DATA_TYPE': ['Строка', 'Дата', 'Число'][param['DATA_TYPE']],
+                'DIRECT_SQL': param['DIRECT_SQL'],
+                'BACK_SQL': param['BACK_SQL']
+            })
         }
-        return nullEmptyArray(params)
+        return {
+            'toml': nullEmptyArray(paramsToml),
+            'json': paramsJson
+        }
     }
 
     async _getFormApplications(formRn) {
-        let apps = []
+        let appsToml = []
+        let appsJson = []
         const query = await this.oci.execute(`
                         select FLA.APPCODE
                           from USERFORMLNKAPPS FLA
@@ -887,11 +1160,17 @@ class Extractor {
                          order by FLA.APPCODE`,
             [formRn])
         for (let i = 0, l = query.rows.length; i < l; i++) {
-            apps.push({
+            appsToml.push({
                 'Код': query.rows[i]['APPCODE']
             })
+            appsJson.push({
+                'APPCODE': query.rows[i]['APPCODE']
+            })
         }
-        return nullEmptyArray(apps)
+        return {
+            'toml': nullEmptyArray(appsToml),
+            'json': appsJson
+        }
     }
 
     async _getActionsMeta() {
@@ -937,7 +1216,8 @@ class Extractor {
             15: 'Стандартный файловый экспорт',
             16: 'Стандартный файловый импорт'
         }
-        let actions = []
+        let actionsToml = []
+        let actionsJson = []
         utils.conU(this.R.actMeta)
         const query = await this.oci.execute(`
                select UF.RN,
@@ -970,7 +1250,11 @@ class Extractor {
                 await this._saveIcons(path.posix.join(this.classDir, curPath), action['SSYSIMAGE'])
             }
             const names = await this._getResources(action['RN'], 'UNITFUNC', 'NAME')
-            actions.push({
+            const forms = await this._getFormsMeta(ACTION_FORM_KIND, null, action['RN'], 'UNITFUNC', curPath)
+            const params = await this._getActionParamsMeta(action['RN'])
+            const methods = await this._getActionMethodsMeta(action['RN'], curPath)
+            const steps = await this._getActionStepsMeta(action['RN'], curPath)
+            actionsToml.push({
                 'Тип': ACTION_STANDARDS[action['STANDARD']],
                 'Подчиненный класс': action['DETAILCODE'],
                 'Код': action['CODE'],
@@ -999,24 +1283,60 @@ class Extractor {
                 'Переопределенный тип': OVERRIDES[action['OVERRIDE']],
                 'Безусловная доступность': !!action['UNCOND_ACCESS'],
                 'Формы': {
-                    'Форма': await this._getFormsMeta(ACTION_FORM_KIND, null, action['RN'], 'UNITFUNC', curPath)
+                    'Форма': forms.toml
                 },
                 'Параметры': {
-                    'Параметр': await this._getActionParamsMeta(action['RN'])
+                    'Параметр': params.toml
                 },
                 'Методы': {
-                    'Метод': await this._getActionMethodsMeta(action['RN'], curPath)
+                    'Метод': methods.toml
                 },
                 'Шаги': {
-                    'Шаг': await this._getActionStepsMeta(action['RN'], curPath)
+                    'Шаг': steps.toml
                 }
             })
+            actionsJson.push({
+                'CODE': action['CODE'],
+                'ACTION_STANDARD': ACTION_STANDARDS[action['STANDARD']],
+                'DETAILCODE': action['DETAILCODE'],
+                'NAME': names,
+                'TECHNOLOGY': ['Стандарт', 'Конструктор'][action['TECHNOLOGY']],
+                'NUMB': action['NUMB'],
+                'CLASS_METHOD': action['SMETHOD'],
+                'ICON': action['SSYSIMAGE'],
+                'PROCESS_MODE': [
+                    'Не зависит от записей',
+                    'Для одной текущей записи',
+                    'Для всех помеченных записей'
+                ][action['PROCESS_MODE']],
+                'TRANSACT_MODE': [
+                    'После всех вызовов действия', '' +
+                    'После каждого вызова действия'
+                ][action['TRANSACT_MODE']],
+                'REFRESH_MODE': [
+                    'Не обновлять',
+                    'Обновлять только текущую запись',
+                    'Обновлять всю выборку'
+                ][action['REFRESH_MODE']],
+                'FORCE_SHOW_DIALOG': !!action['SHOW_DIALOG'],
+                'ONLY_CUSTOM_MODE': !!action['ONLY_CUSTOM_MODE'],
+                'OVERRIDE': OVERRIDES[action['OVERRIDE']],
+                'UNCOND_ACCESS': !!action['UNCOND_ACCESS'],
+                'FORMS': forms.json,
+                'PARAMS': params.json,
+                'METHODS': methods.json,
+                'STEPS': steps.json
+            })
         }
-        return nullEmptyArray(actions)
+        return {
+            'toml': nullEmptyArray(actionsToml),
+            'json': actionsJson
+        }
     }
 
     async _getActionParamsMeta(actionRn) {
-        let params = []
+        let paramsToml = []
+        let paramsJson = []
         const query = await this.oci.execute(`
             select T.RN,
                    T.NAME,
@@ -1042,9 +1362,9 @@ class Extractor {
             [actionRn])
         for (let i = 0, l = query.rows.length; i < l; i++) {
             const param = query.rows[i]
-            params.push({
+            paramsToml.push({
                 'Имя': param['NAME'],
-                // 'Позиция': param['POSITION'],
+                'Позиция': param['POSITION'],
                 'Домен': param['SDOMAIN'],
                 'Тип привязки': [
                     'Нет',
@@ -1061,12 +1381,35 @@ class Extractor {
                 'Функция': param['SLINKED_FUNCTION'],
                 'Параметр метода вызова': param['SM_PARAM']
             })
+            paramsJson.push({
+                'NAME': param['NAME'],
+                'POSITION': param['POSITION'],
+                'DOMAIN': param['SDOMAIN'],
+                'LINK_TYPE': [
+                    'Нет',
+                    'Атрибут',
+                    'Контекст',
+                    'Значение',
+                    'Результат функции',
+                    'Параметр метода вызова'
+                ][param['LINK_TYPE']],
+                'LINK_ATTR': param['SLINK_ATTR'],
+                'CONTEXT': param['CONTEXT'] !== null ? CONTEXTS[param['CONTEXT']] : null,
+                'VALUE': (param['DEF_NUMBER'] || param['DEF_STRING'] || param['DEF_DATE']) ?
+                    utils.coalesce(param['DEF_NUMBER'], param['DEF_STRING'], param['DEF_DATE']) : null,
+                'LINKED_FUNCTION': param['SLINKED_FUNCTION'],
+                'SHOW_METHOD_PARAM': param['SM_PARAM']
+            })
         }
-        return nullEmptyArray(params)
+        return {
+            'toml': nullEmptyArray(paramsToml),
+            'json': paramsJson
+        }
     }
 
     async _getActionMethodsMeta(actionRn, curPath) {
-        let methods = []
+        let methodsToml = []
+        let methodsJson = []
         const query = await this.oci.execute(`
             select T.RN,
                    F.CODE
@@ -1078,19 +1421,28 @@ class Extractor {
             [actionRn])
         for (let i = 0, l = query.rows.length; i < l; i++) {
             const method = query.rows[i]
-            methods.push({
+            const forms = await this._getFormsMeta(ACTION_FORM_KIND, null, method['RN'], 'DMSCLACTIONSMTH', path.posix.join(curPath, 'Methods', method['CODE']))
+            methodsToml.push({
                 'Метод': method['CODE'],
                 'Формы': {
-                    'Форма': await this._getFormsMeta(ACTION_FORM_KIND, null, method['RN'], 'DMSCLACTIONSMTH', path.posix.join(curPath, 'Methods', method['CODE']))
+                    'Форма': forms.toml
                 }
             })
+            methodsJson.push({
+                'CODE': method['CODE'],
+                'FORMS': forms.json
+            })
         }
-        return nullEmptyArray(methods)
+        return {
+            'toml':nullEmptyArray(methodsToml),
+            'json': methodsJson
+        }
     }
 
     async _getActionStepsMeta(actionRn, curPath) {
         const showParamsFolderName = 'StepsShowParams'
-        let steps = []
+        let stepsToml = []
+        let stepsJson = []
         const query = await this.oci.execute(`
             select T.RN,
                    T.POSITION,
@@ -1124,7 +1476,7 @@ class Extractor {
                     path.posix.join(this.classDir, curPath, showParamsFolderName),
                     step['POSITION'] + '.xml')
             }
-            steps.push({
+            stepsToml.push({
                 'Позиция': step['POSITION'],
                 'Тип': [
                     'Выполнить действие',
@@ -1132,7 +1484,7 @@ class Extractor {
                     'Пользовательский отчет',
                     'Пользовательское приложение'][step['STPTYPE']],
                 'Параметр действия': step['SEXEC_PARAM'],
-                'Раздел': steps['SSHOWUNIT'],
+                'Раздел': step['SSHOWUNIT'],
                 'Метод вызова': step['SSHOWMETHOD'],
                 'Параметры метода вызова': step['SHOWPARAMS'] ?
                     path.posix.join('.', curPath, showParamsFolderName, `${step['POSITION']}.xml`) : null,
@@ -1141,8 +1493,28 @@ class Extractor {
                 'Модуль пользовательского приложения': step['SUAMODULE'],
                 'Действие модуля пользовательского приложения': step['SUAMODULE_ACTION']
             })
+            stepsJson.push({
+                'POSITION': step['POSITION'],
+                'STEP_TYPE': [
+                    'Выполнить действие',
+                    'Открыть раздел',
+                    'Пользовательский отчет',
+                    'Пользовательское приложение'][step['STPTYPE']],
+                'EXEC_ACTION_PARAM': step['SEXEC_PARAM'],
+                'SHOWUNIT': step['SSHOWUNIT'],
+                'SHOWMETHOD': step['SSHOWMETHOD'],
+                'SHOWPARAMS': step['SHOWPARAMS'] ?
+                    path.posix.join('.', curPath, showParamsFolderName, `${step['POSITION']}.xml`) : null,
+                'SHOWKIND': step['STPTYPE'] === 1 ? ['Обычный', 'Модальный', 'Как словарь'][step['SHOWKIND']] : null,
+                'USERREPORT': step['SUSERREPORT'],
+                'UAMODULE': step['SUAMODULE'],
+                'UAMODULE_ACTION': step['SUAMODULE_ACTION']
+            })
         }
-        return nullEmptyArray(steps)
+        return {
+            'toml': nullEmptyArray(stepsToml),
+            'json': stepsJson
+        }
     }
 
     async _getObjectsMeta() {
@@ -1158,7 +1530,8 @@ class Extractor {
             8: {label: 'Последовательность', extension: 'sql'},
             9: {label: 'Внешние ключи', extension: 'sql'}
         }
-        let objects = []
+        let objectsToml = []
+        let objectsJson = []
         utils.conU(this.R.objMeta)
         const query = await this.oci.execute(`
             select T.RN,
@@ -1179,7 +1552,7 @@ class Extractor {
             if (obj['PLSQL_TEXT']) {
                 await utils.saveClob1251(obj['PLSQL_TEXT'], path.posix.join(this.classDir, objPath), filename)
             }
-            objects.push({
+            objectsToml.push({
                 'Тип': OBJECT_TYPES[obj['OBJTYPE']].label,
                 'Имя': obj['NAME'],
                 'Наименование (RU)': names.RU,
@@ -1187,8 +1560,18 @@ class Extractor {
                 'Вид': ['Базовый', 'Клиентский', 'Полный клиентский'][obj['OBJKIND']],
                 'Исходный текст': obj['PLSQL_TEXT'] ? path.posix.join('.', objPath, filename) : null
             })
+            objectsJson.push({
+                'OBJECT_TYPE': OBJECT_TYPES[obj['OBJTYPE']].label,
+                'NAME': obj['NAME'],
+                'COMMENT': names,
+                'OBJECT_KIND': ['Базовый', 'Клиентский', 'Полный клиентский'][obj['OBJKIND']],
+                'SOURCE': obj['PLSQL_TEXT'] ? path.posix.join('.', objPath, filename) : null
+            })
         }
-        return nullEmptyArray(objects)
+        return {
+            'toml': nullEmptyArray(objectsToml),
+            'json': objectsJson
+        }
     }
 }
 
