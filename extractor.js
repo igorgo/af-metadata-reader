@@ -856,7 +856,7 @@ class Extractor {
         }
         return {
             'toml': nullEmptyArray(paramsToml),
-            'jsom': paramsJson
+            'json': paramsJson
         }
     }
 
@@ -1439,7 +1439,7 @@ class Extractor {
             })
         }
         return {
-            'toml':nullEmptyArray(methodsToml),
+            'toml': nullEmptyArray(methodsToml),
             'json': methodsJson
         }
     }
