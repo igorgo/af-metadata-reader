@@ -265,6 +265,7 @@ class Extractor {
     }
 
     _getMessage(m) {
+        return m
         // utils.conU(`${m} for ${this.classCode}${this.className}`)
     }
 
