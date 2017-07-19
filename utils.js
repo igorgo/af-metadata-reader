@@ -25,21 +25,20 @@ class Utils {
         await fs.writeFile(`${path}/${filename}`, clob)
     }
 
-    static async saveBlob(lob, path, filename) {
-        lob.on('error', (err) => {
-            throw err
-        })
-        lob.on('end', () => {
-        })
-        lob.on('close', () => {
-        })
-        fs.ensureDirSync(path)
-        let outStream = fs.createWriteStream(`${path}/${filename}`)
-        outStream.on('error', (err) => {
-            throw err
-        })
-        lob.pipe(outStream)
 
+    static saveBlob(lob, path, filename, ) {
+        return new Promise ((resolve, reject) => {
+            lob.on('error', reject)
+            lob.on('end', () => {
+            })
+            lob.on('close', resolve)
+            fs.ensureDirSync(path)
+            let outStream = fs.createWriteStream(`${path}/${filename}`)
+            outStream.on('error', (err) => {
+                throw err
+            })
+            lob.pipe(outStream)
+        })
     }
 
     static conU(message) {

@@ -27,6 +27,7 @@ const strings = {
     connectedMessage: ' …подключено!',
     closeDbMessage: 'Завершение сеанса работы с БД… ',
     closedDbMessage: ' …завершено!',
+    extrStart: 'Подождите, идет процесс извлечения метаданных…',
     extrSucc: 'Извлечение успешно завершено!'
 }
 

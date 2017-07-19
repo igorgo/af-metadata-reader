@@ -42,15 +42,15 @@ class Extractor {
     async extractClass(classCode, dir) {
         this.classCode = classCode
         this.classInfo = await this._getClassInfo()
-        let className = ''
-        if (this.language === 'ru') className = ' - ' + this.classInfo.RU
-        if (this.language === 'uk') className = ' - ' + this.classInfo.UK
-        utils.conE(`${this.R.procClass} ${this.classCode}${className}…`)
+        this.className = ''
+        if (this.language === 'ru') this.className = ' - ' + this.classInfo.RU
+        if (this.language === 'uk') this.className = ' - ' + this.classInfo.UK
+        //utils.conE(`${this.R.procClass} ${this.classCode}${this.className}…`)
         this.dir = path.posix.normalize(dir)
-
         this.classDir = path.posix.join(this.dir, this.classInfo.path.replace(/\//g, '/SubClasses/'))
         this.classRn = this.classInfo.rn
         let promises = await Promise.all([this._getDomainsMeta(), this._getClassMeta()])
+        utils.conE(`… ${this.R.classWord} ${this.classCode}${this.className} ${this.R.classReady}.`)
         const tomlContent = {
             'Используемые домены': {
                 'Домен': promises[0].toml//await this._getDomainsMeta()
@@ -71,13 +71,14 @@ class Extractor {
     }
 
     async _saveIcons(savePath, code) {
-        let query = await this.oci.execute(
+        let query = await this.oci.executeAndStayOpen(
             ' select SY.*  from SYSIMAGES SY  where code = :CODE',
             [code]
         )
         let icon = query.rows[0]
         await utils.saveBlob(icon['SMALL_IMAGE'], savePath, `${icon['CODE']}_16.bmp`)
         await utils.saveBlob(icon['LARGE_IMAGE'], savePath, `${icon['CODE']}_24.bmp`)
+        query.conn.close()
     }
 
     async _getResources(rn, tab, col) {
@@ -106,7 +107,6 @@ class Extractor {
     }
 
     async _getClassInfo() {
-        // utils.conU(this.R.classInfo)
         let r = await this.oci.execute(`
             select RN, PATH
               from (select U.UNITCODE,
@@ -234,7 +234,6 @@ class Extractor {
     }
 
     async _getMetadataDomainList() {
-        utils.conU(this.R.metaDomains)
         let query = await this.oci.execute(`
                 select CODE
                   from DMSDOMAINS
@@ -258,19 +257,25 @@ class Extractor {
                                  and T.PRN = V.RN)`,
             [this.classRn]
         )
+        this._getMessage(this.R.metaDomains)
+        // utils.conE(`${this.R.procClass} ${this.classCode}${this.className}…`)
         return query.rows.map((row) => {
             return row['CODE']
         })
     }
 
+    _getMessage(m) {
+        // utils.conU(`${m} for ${this.classCode}${this.className}`)
+    }
+
     async _getConditionDomainList() {
-        utils.conU(this.R.condDomains)
         let query = await this.oci.execute(`
                 select settings as SETTINGS
                   from UNIT_SHOWMETHODS
                  where PRN = :CLASSRN
                    and LENGTH(SETTINGS) > 0`,
             [this.classRn])
+        this._getMessage(this.R.condDomains)
         let domains = []
         for (let i = 0; i < query.rows.length; i++) {
             let doc = new Dom().parseFromString(query.rows[i]['SETTINGS'])
@@ -284,7 +289,6 @@ class Extractor {
     }
 
     async _getClassMeta() {
-        utils.conU(this.R.classDef)
         let classQuery = await this.oci.execute(`
              select CL.*,
                     (select I.CODE from SYSIMAGES I where I.RN = CL.SYSIMAGE) as SSYSIMAGE,
@@ -293,6 +297,7 @@ class Extractor {
               where CL.RN = :CLASSRN
                 and CL.DOCFORM = UA.RN(+)`,
             [this.classRn])
+        this._getMessage(this.R.classDef)
         let classRow = classQuery.rows[0]
         if (classRow['SSYSIMAGE']) {
             await this._saveIcons(this.classDir, classRow['SSYSIMAGE'])
@@ -496,10 +501,10 @@ class Extractor {
 
     async _getTableMeta(tableName) {
         if (tableName) {
-            utils.conU(this.R.tabDef)
             const query = await this.oci.execute(
                 'select TL.* from TABLELIST TL where TL.TABLENAME = :TABLENAME',
                 [tableName])
+            this._getMessage(this.R.tabDef)
             const res = query.rows[0]
             const names = await this._getResources(res['RN'], 'TABLELIST', 'TABLENOTE')
             const cToml = {
@@ -527,7 +532,6 @@ class Extractor {
     }
 
     async _getAttributesMeta() {
-        utils.conU(this.R.attrMeta)
         const attrsQuery = await this.oci.execute(`
                 select CA.*,
                        DM.CODE            as SDOMAIN,
@@ -540,6 +544,7 @@ class Extractor {
                    and CA.REF_ATTRIBUTE = CAR.RN(+)
                  order by CA.COLUMN_NAME`,
             [this.classRn])
+        this._getMessage(this.R.attrMeta)
         let attrsToml = []
         let attrsJson = []
         for (let i = 0, len = attrsQuery.rows.length; i < len; i++) {
@@ -579,7 +584,6 @@ class Extractor {
             5: 'Обязательность',
             6: 'Неизменяемость'
         }
-        utils.conU(this.R.consMeta)
         const query = await this.oci.execute(`
                 select T.*,
                        MES.CODE       as MES_CODE,
@@ -590,6 +594,7 @@ class Extractor {
                    and T.MESSAGE = MES.RN(+)
                  order by T.CONSTRAINT_TYPE, T.CONSTRAINT_NAME
             `, [this.classRn])
+        this._getMessage(this.R.consMeta)
         let constrsToml = []
         let constrsJson = []
         for (let i = 0, len = query.rows.length; i < len; i++) {
@@ -665,7 +670,6 @@ class Extractor {
     async _getLinksMeta() {
         let linksToml = []
         let linksJson = []
-        utils.conU(this.R.linkMeta)
         const query = await this.oci.execute(`
                 select T.RN,
                        T.CONSTRAINT_NAME,
@@ -699,6 +703,7 @@ class Extractor {
                    and T.PATH_ATTR = PA.RN(+)
                  order by T.CONSTRAINT_NAME`,
             [this.classRn])
+        this._getMessage(this.R.linkMeta)
         for (let i = 0, l = query.rows.length; i < l; i++) {
             const link = query.rows[i]
             const names = await this._getResources(link['RN'], 'DMSCLLINKS', 'CONSTRAINT_NOTE')
@@ -780,7 +785,6 @@ class Extractor {
     async _getViewsMeta() {
         let viewsToml = []
         let viewsJson = []
-        utils.conU(this.R.viewMeta)
         const query = await this.oci.execute(`
                 select T.RN,
                        T.VIEW_NAME,
@@ -791,6 +795,7 @@ class Extractor {
                  where T.PRN = :WORKIN_CLASS
                  order by T.VIEW_NAME`,
             [this.classRn])
+        this._getMessage(this.R.viewMeta)
         for (let i = 0, l = query.rows.length; i < l; i++) {
             const view = query.rows[i]
             const names = await this._getResources(view['RN'], 'DMSCLVIEWS', 'VIEW_NOTE')
@@ -888,7 +893,6 @@ class Extractor {
     async _getMethodsMeta() {
         let methodsToml = []
         let methodsJson = []
-        utils.conU(this.R.metMeta)
         const q = await this.oci.execute(`
                 select T.RN,
                        T.CODE,
@@ -907,6 +911,7 @@ class Extractor {
                  where T.PRN = :WORKIN_CLASS
                  order by T.CODE`,
             [this.classRn])
+        this._getMessage(this.R.metMeta)
         for (let i = 0, l = q.rows.length; i < l; i++) {
             const method = q.rows[i]
             const names = await
@@ -1034,7 +1039,6 @@ class Extractor {
         const settingsFileName = 'Settings.xml'
         let showMethodsToml = []
         let showMethodsJson = []
-        utils.conU(this.R.shMetMeta)
         const query = await this.oci.execute(`
                   select SM.RN,
                          SM.METHOD_CODE,
@@ -1052,6 +1056,7 @@ class Extractor {
                           order by SM.TECHNOLOGY,
                      SM.METHOD_CODE`,
             [this.classRn])
+        this._getMessage(this.R.shMetMeta)
         for (let i = 0, l = query.rows.length; i < l; i++) {
             const showMethod = query.rows[i]
             const names = await this._getResources(showMethod['RN'], 'UNIT_SHOWMETHODS', 'METHOD_NAME')
@@ -1218,7 +1223,6 @@ class Extractor {
         }
         let actionsToml = []
         let actionsJson = []
-        utils.conU(this.R.actMeta)
         const query = await this.oci.execute(`
                select UF.RN,
                     UF.STANDARD,
@@ -1243,6 +1247,7 @@ class Extractor {
                 and UF.METHOD = M.RN(+)
               order by UF.CODE`,
             [this.classRn])
+        this._getMessage(this.R.actMeta)
         for (let i = 0, l = query.rows.length; i < l; i++) {
             const action = query.rows[i]
             const curPath = path.posix.join('Actions', action['CODE'])
@@ -1532,7 +1537,6 @@ class Extractor {
         }
         let objectsToml = []
         let objectsJson = []
-        utils.conU(this.R.objMeta)
         const query = await this.oci.execute(`
             select T.RN,
                    T.OBJTYPE,
@@ -1544,6 +1548,7 @@ class Extractor {
              order by T.NAME`,
             [this.classRn]
         )
+        this._getMessage(this.R.objMeta)
         for (let i = 0, l = query.rows.length; i < l; i++) {
             const obj = query.rows[i]
             const names = await this._getResources(obj['RN'], 'DMSCLOBJECTS', 'CAPTION')

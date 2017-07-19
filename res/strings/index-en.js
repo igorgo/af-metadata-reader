@@ -27,6 +27,7 @@ const strings = {
     connectedMessage: ' …connected!',
     closeDbMessage: 'Closing db connection… ',
     closedDbMessage: ' …closed!',
+    extrStart: 'Wait, the metadata extraction in progress…',
     extrSucc: 'The extraction have been finished successfully!'
 }
 

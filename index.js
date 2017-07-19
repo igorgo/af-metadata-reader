@@ -4,18 +4,13 @@
  */
 const
     inquirer = require('inquirer'),
-    oracledb = require('oracledb'),
+    Oci = require('./oci'),
     program = require('commander'),
     Extractor = require('./extractor'),
     utils = require('./utils')
 
 let R = require('./res/strings/index-en')
-
 let oci, language, params
-
-oracledb.maxRows = 10000
-oracledb.outFormat = oracledb.OBJECT // {outFormat : oracledb.ARRAY}
-oracledb.fetchAsString = [oracledb.CLOB]
 
 const main = async () => {
     utils.con('')
@@ -32,8 +27,11 @@ const main = async () => {
     exports.language = language
     if (language !== 'en') R = require('./res/strings/index-' + language)
     let params = await askParams()
-    oci = await connectDB(params.username, params.password, params.dbname)
+    utils.conE(R.connectMessage)
+    oci = await new Oci(params.username, params.password, params.dbname)
+    utils.conE(R.connectedMessage)
     exports.oci = oci
+    utils.conU(R.extrStart)
     let classList = await getClassesList()
     const promises = classList.map(
         cls => exportClass(cls)
@@ -191,17 +189,6 @@ const askParams = async () => {
         })).extractOnlyFilled
     }
     return params
-}
-
-const connectDB = async (dbUser, dbPass, dbName) => {
-    utils.con(R.connectMessage)
-    let connect = await oracledb.getConnection({
-        user: dbUser,
-        password: dbPass,
-        connectString: dbName
-    })
-    utils.conE(R.connectedMessage)
-    return connect
 }
 
 const closeConnection = async () => {

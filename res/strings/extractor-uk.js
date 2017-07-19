@@ -17,7 +17,9 @@ const strings = {
     metMeta:  '… отримання метаданих методів',
     shMetMeta:'… отримання метаданих методів виклику',
     actMeta:  '… отримання метаданих дій',
-    objMeta:  '… отримання метаданих об\'єктів'
+    objMeta:  '… отримання метаданих об\'єктів',
+    classReady: 'вивантажено',
+    classWord: 'клас'
 }
 
 module.exports = strings

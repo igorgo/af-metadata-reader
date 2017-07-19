@@ -17,7 +17,9 @@ const strings = {
     metMeta: '… get methods\' metadata',
     shMetMeta: '… get show methods\' metadata',
     actMeta: '… get actions\' metadata',
-    objMeta: '… get objects\' metadata'
+    objMeta: '… get objects\' metadata',
+    classReady: 'have been extracted',
+    classWord: 'class'
 }
 
 module.exports = strings
