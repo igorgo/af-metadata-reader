@@ -393,9 +393,9 @@ class Extractor {
 
     async _getFormsMeta(kind, showMethodRn, actionMethod, table, curPath) {
 
-        const formDataName = 'Form.xml'
+        const formDataName = 'Form'
         const formEventsName = 'Events'
-        const condDataName = 'ConditionForm.xml'
+        const condDataName = 'ConditionForm'
         const condEventsName = 'ConditionEvents'
 
         let formsToml = []

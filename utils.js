@@ -5,19 +5,25 @@ const fs = require('fs-extra'),
     iconv = require('iconv-lite'),
     pd = require('pretty-data2').pd,
     inquirer = require('inquirer'),
-    crypto = require('crypto')
+    crypto = require('crypto'),
+    xml2js = require('xml2js')
 
 let ui = new inquirer.ui.BottomBar()
 
 class Utils {
     static async saveClob1251Xml(xml, path, filename) {
         fs.ensureDirSync(path)
-        await fs.writeFile(`${path}/${filename}`, iconv.encode(pd.xml(xml), 'win1251'))
+        let parser = new xml2js.Parser({mergeAttrs : true})
+        fs.writeFile(`${path}/${filename}.xml`, iconv.encode(pd.xml(xml), 'win1251'))
+        parser.parseString(xml,(err, result) => {
+            fs.writeFile(`${path}/${filename}.json`, JSON.stringify(result, null, 4))
+        })
+
     }
 
     static async saveClob1251(clob, path, filename) {
         fs.ensureDirSync(path)
-        await fs.writeFile(`${path}/${filename}`, iconv.encode(clob, 'win1251'))
+        fs.writeFile(`${path}/${filename}`, iconv.encode(clob, 'win1251'))
     }
 
     static async saveTextFile(clob, path, filename) {
@@ -26,8 +32,8 @@ class Utils {
     }
 
 
-    static saveBlob(lob, path, filename, ) {
-        return new Promise ((resolve, reject) => {
+    static saveBlob(lob, path, filename,) {
+        return new Promise((resolve, reject) => {
             lob.on('error', reject)
             lob.on('end', () => {
             })
