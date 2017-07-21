@@ -1,9 +1,10 @@
 class Oci {
     constructor(user, pass, db) {
-        this.db = require('oracledb')
+        this.db = require('oracle12db-win64')
         this.db.maxRows = 10000
         this.db.outFormat = this.db.OBJECT // {outFormat : oracledb.ARRAY}
         this.db.fetchAsString = [this.db.CLOB]
+        this.db.poolMax = 10;
         return new Promise(resolve => {
             this.db.createPool({
                 user: user,
@@ -20,8 +21,7 @@ class Oci {
         return await this.db.createPool({
             user: user,
             password: pass,
-            connectString: db,
-            poolMax: 10
+            connectString: db
         })
     }
 

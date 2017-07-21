@@ -34,6 +34,7 @@ const nullEmptyArray = (array) => {
 class Extractor {
     constructor() {
         let gVars = require('./index')
+        this.needJson = gVars.needJson
         this.language = gVars.language
         this.R = require('./res/strings/extractor-' + this.language)
         this.oci = gVars.oci
@@ -57,12 +58,12 @@ class Extractor {
             },
             'Класс': promises[1].toml // await this._getClassMeta()
         }
-        const jsonContent = {
+        const jsonContent = this.needJson ? {
             'usingDomains': promises[0].json,
             'class': promises[1].json
-        }
-        await utils.saveTextFile(tomlify(tomlContent, null, 4), this.classDir, 'Metadata.toml')
-        await utils.saveTextFile(JSON.stringify(jsonContent, null, 4), this.classDir, 'Metadata.json')
+        } : null
+        utils.saveTextFile(tomlify(tomlContent, null, 4), this.classDir, 'Metadata.toml')
+        this.needJson && utils.saveTextFile(JSON.stringify(jsonContent, null, 4), this.classDir, 'Metadata.json')
         return {
             classRn: this.classRn,
             classCode: this.classCode,
@@ -176,7 +177,7 @@ class Extractor {
                     {'Перечисляемое значение': enums.toml}
                     : null
             }
-            let jsonDomain = {
+            let jsonDomain = this.needJson ? {
                 'CODE': domain['CODE'],
                 'NAME': name,
                 'DATA_TYPE': domain['DATATYPE_TEXT'],
@@ -188,9 +189,9 @@ class Extractor {
                 'PADDING': !!domain['PADDING'],
                 'ENUMERATED': !!domain['ENUMERATED'],
                 'ENUMS': enums.json
-            }
+            } : null
             domainsDataToml.push(tomlDomain)
-            domainsDataJson.push(jsonDomain)
+            this.needJson && domainsDataJson.push(jsonDomain)
         }
         return {
             'toml': nullEmptyArray(domainsDataToml),
@@ -220,7 +221,7 @@ class Extractor {
                 'Наименование (RU)': enumName.RU,
                 'Наименование (UK)': enumName.UK
             })
-            enumsJson.push({
+            this.needJson && enumsJson.push({
                 'POSITION': enumRow['POSITION'].trim(),
                 'VALUE': utils.coalesce(enumRow['VALUE_STR'], enumRow['VALUE_NUM'], enumRow['VALUE_DATE']),
                 'NAME': enumName
@@ -479,7 +480,7 @@ class Extractor {
                 } : null,
                 'Файл': formRecord['FORM_DATA'] ? path.posix.join('.', relPath, `${formRecord['FORM_LANGUAGE']}_${formDataName}`) : null
             })
-            formsJson.push({
+            this.needJson && formsJson.push({
                 'FORM_CLASS': formRecord['FORM_CLASS'],
                 'FORM_NAME': formRecord['FORM_NAME'],
                 'EVENTS_LANGUAGE': formRecord['EVENTS_LANGUAGE'] ?
@@ -515,12 +516,12 @@ class Extractor {
                 'Тип информации': ['Постоянная', 'Временная'][res['TEMPFLAG']],
                 'Технология производства': ['Стандарт', 'Конструктор'][res['TECHNOLOGY']]
             }
-            const cJson = {
+            const cJson = this.needJson ? {
                 'TABLENAME': res['TABLENAME'],
                 'COMMENT': names,
                 'TEMPFLAG': !!res['TEMPFLAG'],
                 'TECHNOLOGY': ['Стандарт', 'Конструктор'][res['TECHNOLOGY']]
-            }
+            } : null
             return {
                 'toml': cToml,
                 'json': cJson
@@ -561,7 +562,7 @@ class Extractor {
                 'Связь': attr['SREF_LINK'],
                 'Атрибут связи': attr['SREF_ATTRIBUTE']
             })
-            attrsJson.push({
+            this.needJson && attrsJson.push({
                 'COLUMN_NAME': attr['COLUMN_NAME'],
                 'CAPTION': names,
                 'POSITION': attr['POSITION'],
@@ -621,7 +622,7 @@ class Extractor {
                     'Атрибут': attrs.toml
                 }
             })
-            constrsJson.push({
+            this.needJson && constrsJson.push({
                 'CONSTRAINT_NAME': constr['CONSTRAINT_NAME'],
                 'COMMENT': names,
                 'CONSTRAINT_TYPE': CONSTRAINT_TYPES[constr['CONSTRAINT_TYPE']],
@@ -656,12 +657,12 @@ class Extractor {
                 'Атрибут': attr['COLUMN_NAME']
             }
         })
-        const atJson = query.rows.map((attr) => {
+        const atJson = this.needJson ? query.rows.map((attr) => {
             return {
                 'POSITION': attr['POSITION'],
                 'COLUMN_NAME': attr['COLUMN_NAME']
             }
-        })
+        }) : null
         return {
             'toml': nullEmptyArray(atToml),
             'json': atJson
@@ -727,7 +728,7 @@ class Extractor {
                     'Атрибут': attrs.toml
                 }
             })
-            linksJson.push({
+            this.needJson && linksJson.push({
                 'CONSTRAINT_NAME': link['CONSTRAINT_NAME'],
                 'CONSTRAINT_NOTE': names,
                 'UNIT_SOURCE': link['UNITCODE'],
@@ -771,7 +772,7 @@ class Extractor {
                 'Атрибут класса-приемника': attr['SDESTINATION'],
                 'Атрибут класса-источника': attr['SSOURCE']
             })
-            attrsJson.push({
+            this.needJson && attrsJson.push({
                 'POSITION': attr['POSITION'],
                 'DESTINATION': attr['SDESTINATION'],
                 'SOURCE': attr['SSOURCE']
@@ -816,7 +817,7 @@ class Extractor {
                     'Атрибут': attrs.toml
                 }
             })
-            viewsJson.push({
+            this.needJson && viewsJson.push({
                 'VIEW_NAME': view['VIEW_NAME'],
                 'VIEW_NOTE': names,
                 'CUSTOM_QUERY': !!view['CUSTOM_QUERY'],
@@ -850,7 +851,7 @@ class Extractor {
                 'Наименование параметра': param['PARAM_NAME'],
                 'Домен': param['SDOMAIN']
             })
-            paramsJson.push({
+            this.needJson && paramsJson.push({
                 'PARAM_NAME': param['PARAM_NAME'],
                 'DOMAIN': param['SDOMAIN']
             })
@@ -880,7 +881,7 @@ class Extractor {
                 'Атрибут класса': attr['SATTR'],
                 'Имя колонки': attr['COLUMN_NAME']
             })
-            attrsJson.push({
+            this.needJson && attrsJson.push({
                 'CLASS_ATTRIBUTE': attr['SATTR'],
                 'COLUMN_NAME': attr['COLUMN_NAME']
             })
@@ -935,7 +936,7 @@ class Extractor {
                     'Параметр': params.toml
                 }
             })
-            methodsJson.push({
+            this.needJson && methodsJson.push({
                 'CODE': method['CODE'],
                 'METHOD_TYPE': ['Процедура', 'Функция'][method['METHOD_TYPE']],
                 'ACCESSIBILITY': ['Базовый', 'Клиентский'][method['ACCESSIBILITY']],
@@ -1007,7 +1008,7 @@ class Extractor {
                 'Параметр действия': param['ACTION_PARAM'],
                 'Обязательный для заполнения': !!param['MANDATORY']
             })
-            paramsJson.push({
+            this.needJson && paramsJson.push({
                 'NAME': param['NAME'],
                 'CAPTION': names,
                 'POSITION': param['POSITION'],
@@ -1088,7 +1089,7 @@ class Extractor {
                     'Форма': forms.toml
                 }
             })
-            showMethodsJson.push({
+            this.needJson && showMethodsJson.push({
                 'METHOD_CODE': showMethod['METHOD_CODE'],
                 'METHOD_NAME': names,
                 'TECHNOLOGY': ['Стандарт', 'Конструктор'][showMethod['TECHNOLOGY']],
@@ -1140,7 +1141,7 @@ class Extractor {
                 'Прямой запрос': param['DIRECT_SQL'],
                 'Обратный запрос': param['BACK_SQL']
             })
-            paramsJson.push({
+            this.needJson && paramsJson.push({
                 'COLUMN_NAME': param['COLUMN_NAME'],
                 'NAME': names,
                 'IN_CODE': param['IN_CODE'],
@@ -1169,7 +1170,7 @@ class Extractor {
             appsToml.push({
                 'Код': query.rows[i]['APPCODE']
             })
-            appsJson.push({
+            this.needJson && appsJson.push({
                 'APPCODE': query.rows[i]['APPCODE']
             })
         }
@@ -1301,7 +1302,7 @@ class Extractor {
                     'Шаг': steps.toml
                 }
             })
-            actionsJson.push({
+            this.needJson && actionsJson.push({
                 'CODE': action['CODE'],
                 'ACTION_STANDARD': ACTION_STANDARDS[action['STANDARD']],
                 'DETAILCODE': action['DETAILCODE'],
@@ -1387,7 +1388,7 @@ class Extractor {
                 'Функция': param['SLINKED_FUNCTION'],
                 'Параметр метода вызова': param['SM_PARAM']
             })
-            paramsJson.push({
+            this.needJson && paramsJson.push({
                 'NAME': param['NAME'],
                 'POSITION': param['POSITION'],
                 'DOMAIN': param['SDOMAIN'],
@@ -1434,7 +1435,7 @@ class Extractor {
                     'Форма': forms.toml
                 }
             })
-            methodsJson.push({
+            this.needJson && methodsJson.push({
                 'CODE': method['CODE'],
                 'FORMS': forms.json
             })
@@ -1499,7 +1500,7 @@ class Extractor {
                 'Модуль пользовательского приложения': step['SUAMODULE'],
                 'Действие модуля пользовательского приложения': step['SUAMODULE_ACTION']
             })
-            stepsJson.push({
+            this.needJson && stepsJson.push({
                 'POSITION': step['POSITION'],
                 'STEP_TYPE': [
                     'Выполнить действие',
@@ -1566,7 +1567,7 @@ class Extractor {
                 'Вид': ['Базовый', 'Клиентский', 'Полный клиентский'][obj['OBJKIND']],
                 'Исходный текст': obj['PLSQL_TEXT'] ? path.posix.join('.', objPath, filename) : null
             })
-            objectsJson.push({
+            this.needJson && objectsJson.push({
                 'OBJECT_TYPE': OBJECT_TYPES[obj['OBJTYPE']].label,
                 'NAME': obj['NAME'],
                 'COMMENT': names,

@@ -31,6 +31,7 @@ const main = async () => {
     oci = await new Oci(params.username, params.password, params.dbname)
     utils.conE(R.connectedMessage)
     exports.oci = oci
+    exports.needJson = params.json
     utils.conU(R.extrStart)
     let classList = await getClassesList()
     const promises = classList.map(
@@ -88,7 +89,9 @@ const askParams = async () => {
         .option('-u, --username <username>', R.dbUserPrompt)
         .option('-p, --password <password>', R.dbPassPrompt)
         .option('-d, --directory <directory>', R.rootDirPrompt)
+        .option('-j, --json', R.inclJson)
         .parse(process.argv)
+    params.json = program.json
     params.dbname = program.dbname ||
         (await inquirer.prompt({
             type: 'input',

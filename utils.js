@@ -12,7 +12,10 @@ let ui = new inquirer.ui.BottomBar()
 class Utils {
     static async saveClob1251Xml(xml, path, filename) {
         fs.ensureDirSync(path)
-        await fs.writeFile(`${path}/${filename}`, iconv.encode(pd.xml(xml), 'win1251'))
+        let content = pd.xml(xml)
+        content = content.replace('<![CDATA[\n      <?xml', '<![CDATA[<?xml')
+        content = iconv.encode(content,'win1251')
+        await fs.writeFile(`${path}/${filename}`, content)
     }
 
     static async saveClob1251(clob, path, filename) {

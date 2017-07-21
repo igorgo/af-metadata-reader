@@ -28,6 +28,7 @@ const strings = {
     closeDbMessage: 'Closing db connection… ',
     closedDbMessage: ' …closed!',
     extrStart: 'Wait, the metadata extraction in progress…',
+    inclJson: 'Include json metadata file',
     extrSucc: 'The extraction have been finished successfully!'
 }
 
